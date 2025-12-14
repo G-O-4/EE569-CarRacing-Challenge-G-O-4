@@ -29,7 +29,7 @@ This repository provides a **DQN baseline implementation** to get you started.
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/Nuri-benbarka/EE569-CarRacing-Challenge.git
 cd car_racing
 
 # Create environment (recommended)
