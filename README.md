@@ -1,0 +1,130 @@
+# EE569 Deep Learning: CarRacing-v3 RL Challenge 🏎️💨
+
+**Course:** EE569 Deep Learning  
+**Due Date:** 29 December 2025, 23:59  
+**Weight:** 6 marks (out of 100)  
+**Group Size:** 2-3 students  
+
+## 📋 Overview
+
+Your mission is to implement and train a Reinforcement Learning agent to master the **CarRacing-v3** environment in Gymnasium. You may use any algorithm covered in class (DQN, TD3, SAC, World Models, or CQL).
+
+**Goal:** Achieve professional-level racing performance while minimizing sample complexity.
+
+### 🎯 Performance Thresholds
+- **Success:** Average score > **700** over 3 evaluation episodes.
+- **Excellence:** Average score > **800** with minimal environment interactions.
+
+### 🚫 Restrictions
+1. **Inputs:** Must work with pixel inputs (84×84).
+2. **Environment:** No modifications to the environment logic allowed (beyond standard preprocessing like resizing/stacking).
+
+---
+
+## 🚀 Getting Started (Baseline)
+
+This repository provides a **DQN baseline implementation** to get you started.
+
+### 1. Installation
+
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd car_racing
+
+# Create environment (recommended)
+conda create -n car_racing python=3.10
+conda activate car_racing
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Training
+
+Train the agent using `dqn_car_racing.py`. This script includes Aim logging.
+
+```bash
+python dqn_car_racing.py
+```
+
+To view training logs with Aim:
+```bash
+aim up
+```
+
+### 3. Evaluation
+
+Run the inference script to evaluate your trained model and generate videos.
+
+```bash
+# Run 3 evaluation episodes (default uses checkpoints/best_model.pth)
+python inference.py --episodes 3
+
+# Save video of the run
+python inference.py --episodes 1 --save-video
+
+# Evaluate a specific checkpoint without rendering (faster)
+python inference.py --checkpoint checkpoints/final_model.pth --no-render
+```
+
+---
+
+## 📊 Deliverables
+
+Submit a single ZIP file containing:
+
+### 1. Code 💻
+- `train.py` (or your modified `dqn_car_racing.py`) - Main training script.
+- `inference.py` - Evaluation & video recording.
+- `requirements.txt` - Complete dependency list with versions.
+- **Micro-objective:** Code must be clean, modular, and well-commented.
+
+### 2. Report 📄
+A **4-6 page PDF** (`report.pdf`) covering:
+- **Method Selection:** Why this algorithm? Theoretical advantages?
+- **Implementation Details:** Architectures, loss functions, hyperparameters.
+- **Experimental Design:** Table of **6+ experiments** (varied hyperparams, architectures, or algorithms).
+- **Results:** Learning curves, convergence analysis, final performance.
+- **Comparison:** Sample efficiency vs. final performance.
+- **Ablation Study:** What components mattered most? (e.g., target networks, epsilon decay).
+- **Challenges:** Negative results and what you learned from failures.
+
+### 3. Aim Experiment Logs 📈
+Include your `.aim` directory or a comprehensive export of your logs to prove reproducibility.
+
+### 4. Video 🎥
+- `best_run.mp4`: A video of your best evaluation episode (score > 700).
+- Must demonstrate smooth, stable driving.
+- Use the `--save-video` flag in `inference.py`.
+
+### 5. README 📖 
+- Clear instructions to reproduce your results.
+- Exact training and evaluation commands.
+- Brief description of your algorithm and findings.
+
+---
+
+## 🏆 Grading Scheme (6 Marks Total)
+
+### Base Grade
+| Component | Marks | Criteria |
+|-----------|-------|----------|
+| **Method Implementation** | 1.0 | Correctness and completeness of the RL algorithm. |
+| **Algorithmic Understanding** | 1.0 | Quality of report and theoretical justification. |
+| **Experimental Rigor** | 1.0 | 6+ meaningful experiments & ablation studies. |
+| **Performance** | 1.0 | Achieving > 700 average reward. |
+| **Reproducibility** | 1.0 | aim logs, clear README, clean code. |
+| **Video Quality** | 1.0 | Demonstrates learned behavior (smooth driving). |
+
+### Bonus Marks (Maximum +2)
+**🏅 Bonus 1: Highest Score (+1)**
+- Awarded to the group with the **highest evaluation score** (avg over 3 episodes).
+- Must be > 700 to qualify. Winner takes all (no ties).
+
+**🌱 Bonus 2: Efficiency Champion (+1)**
+- Awarded to the group with the **lowest total environment interactions** (sum of steps across all experiments) while still achieving a score > 700.
+- Proven via `aim_run['hparams']['total_steps']` or logs.
+
+## توّكّل على الله، واستمتع بتعليم مركبتك القيادة! 💨🚗
+

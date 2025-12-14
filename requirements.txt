@@ -1,0 +1,4 @@
+gymnasium[box2d]
+torch>=2.0.0
+numpy
+opencv-python
