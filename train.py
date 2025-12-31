@@ -18,7 +18,7 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def evaluate(agent: SACAgent, cfg: SACConfig, device: torch.device) -> Tuple[float, float]:
+def evaluate(agent: SACAgent, cfg: SACConfig, device: torch.device, eval_seed_base: Optional[int]) -> Tuple[float, float]:
     env = make_env(
         env_id=cfg.env_id,
         render_mode=None,
@@ -28,8 +28,11 @@ def evaluate(agent: SACAgent, cfg: SACConfig, device: torch.device) -> Tuple[flo
         action_repeat=cfg.action_repeat,
     )
     rewards = []
-    for _ in range(cfg.num_eval_episodes):
-        obs, _ = env.reset()
+    for i in range(cfg.num_eval_episodes):
+        if eval_seed_base is None:
+            obs, _ = env.reset()
+        else:
+            obs, _ = env.reset(seed=int(eval_seed_base) + i)
         done = False
         ep_r = 0.0
         while not done:
@@ -72,6 +75,7 @@ def main():
     parser.add_argument("--total-steps", type=int, default=SACConfig.total_steps)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--resume", type=str, default=None, help="Resume training from a SAC+DrQ checkpoint path")
 
     parser.add_argument("--grayscale", action="store_true", help="Use grayscale observations (default)")
     parser.add_argument("--rgb", action="store_true", help="Use RGB observations")
@@ -80,6 +84,12 @@ def main():
 
     parser.add_argument("--eval-every-steps", type=int, default=SACConfig.eval_every_steps)
     parser.add_argument("--num-eval-episodes", type=int, default=SACConfig.num_eval_episodes)
+    parser.add_argument(
+        "--eval-seed-base",
+        type=int,
+        default=10000,
+        help="Base seed for eval episodes (set to -1 for random eval). Seeds used: base, base+1, ...",
+    )
 
     parser.add_argument("--batch-size", type=int, default=SACConfig.batch_size)
     parser.add_argument("--start-steps", type=int, default=SACConfig.start_steps)
@@ -164,9 +174,66 @@ def main():
     step = 0
     episode = 0
 
-    obs, _ = env.reset()
+    # Episode seeding: deterministic but diverse tracks across episodes.
+    episode_seed = int(args.seed)
+    obs, _ = env.reset(seed=episode_seed)
     ep_reward = 0.0
     ep_len = 0
+
+    # Resume (optional): restores weights + optimizer states + step counters.
+    if args.resume is not None:
+        if not os.path.exists(args.resume):
+            raise FileNotFoundError(f"Resume checkpoint not found: {args.resume}")
+        payload = torch.load(args.resume, map_location=device, weights_only=False)
+        if payload.get("algo") != "sac_drq":
+            raise ValueError(f"Can only resume SAC+DrQ checkpoints. Found algo={payload.get('algo')!r}")
+
+        # Structural settings are taken from the checkpoint config to avoid shape mismatch.
+        ckpt_cfg = payload.get("cfg", {})
+        cfg = SACConfig(**{k: v for k, v in ckpt_cfg.items() if k in SACConfig().__dict__})
+
+        # Allow extending the run horizon / eval cadence.
+        cfg.total_steps = int(args.total_steps)
+        cfg.eval_every_steps = int(args.eval_every_steps)
+        cfg.num_eval_episodes = int(args.num_eval_episodes)
+
+        # Recreate env/agent with checkpoint cfg
+        env.close()
+        env = make_env(
+            env_id=cfg.env_id,
+            render_mode=None,
+            action_mode="continuous2d",
+            grayscale=cfg.grayscale,
+            frame_stack=cfg.frame_stack,
+            action_repeat=cfg.action_repeat,
+        )
+        obs_shape = env.observation_space.shape
+        action_dim = env.action_space.shape[0]
+
+        agent = SACAgent(obs_shape=obs_shape, action_dim=action_dim, cfg=cfg, device=device)
+        agent.load_state_dict(payload["agent"])
+
+        optim = payload.get("optim", {})
+        if "actor" in optim:
+            agent.actor_opt.load_state_dict(optim["actor"])
+        if "critic" in optim:
+            agent.critic_opt.load_state_dict(optim["critic"])
+        if "alpha" in optim:
+            agent.alpha_opt.load_state_dict(optim["alpha"])
+
+        # Replay is not resumed (would be extremely large); we refill it from fresh interaction.
+        replay = ReplayBuffer(obs_shape=obs_shape, action_dim=action_dim, capacity=cfg.replay_size)
+
+        step = int(payload.get("step", 0))
+        episode = int(payload.get("episode", 0))
+        best_eval = float(payload.get("best_eval_reward", best_eval))
+
+        episode_seed = int(args.seed) + episode
+        obs, _ = env.reset(seed=episode_seed)
+        ep_reward = 0.0
+        ep_len = 0
+
+        print(f"Resumed from {args.resume} at step={step}, episode={episode}, best_eval={best_eval:.1f}")
 
     print("Starting SAC+DrQ training...")
     while step < cfg.total_steps:
@@ -187,7 +254,7 @@ def main():
         step += 1
 
         # Updates
-        if step >= cfg.update_after and step % cfg.update_every == 0:
+        if len(replay) >= max(cfg.update_after, cfg.batch_size) and step % cfg.update_every == 0:
             for _ in range(cfg.updates_per_step):
                 metrics = agent.update(replay)
                 if aim_run is not None:
@@ -207,13 +274,15 @@ def main():
             if episode % 10 == 0:
                 print(f"Episode {episode} | step {step}/{cfg.total_steps} | reward {ep_reward:.1f} | len {ep_len}")
 
-            obs, _ = env.reset()
+            episode_seed += 1
+            obs, _ = env.reset(seed=episode_seed)
             ep_reward = 0.0
             ep_len = 0
 
         # Periodic evaluation
         if step % cfg.eval_every_steps == 0:
-            eval_mean, eval_std = evaluate(agent, cfg, device)
+            eval_seed_base = None if args.eval_seed_base is not None and int(args.eval_seed_base) < 0 else int(args.eval_seed_base)
+            eval_mean, eval_std = evaluate(agent, cfg, device, eval_seed_base=eval_seed_base)
             print(f"[EVAL] step {step} | mean {eval_mean:.1f} ± {eval_std:.1f} | best {best_eval:.1f}")
             if aim_run is not None:
                 aim_run.track({"eval_reward_mean": eval_mean, "eval_reward_std": eval_std}, step=step)

@@ -22,7 +22,9 @@ class SACConfig:
     num_eval_episodes: int = 3
 
     # Replay / updates
-    replay_size: int = 1_000_000
+    # Note: storing stacked 84x84 uint8 frames can be RAM-heavy. 100k is a safer default
+    # for typical student machines while still working well with DrQ-style augmentation.
+    replay_size: int = 100_000
     batch_size: int = 256
     start_steps: int = 10_000
     update_after: int = 10_000

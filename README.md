@@ -98,6 +98,13 @@ python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --e
 python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --episodes 1 --save-video --video-dir ./videos
 ```
 
+### 3. Extend a run (resume training)
+
+```bash
+# Continue training from a previous checkpoint up to a higher total step count
+python train.py --resume checkpoints/last_sac_drq.pth --total-steps 3000000 --seed 1
+```
+
 ---
 
 ## 🔬 Suggested Experiment Matrix (6+ runs)
