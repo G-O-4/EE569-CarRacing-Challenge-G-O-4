@@ -11,6 +11,12 @@ import collections
 from collections import deque
 import os
 from aim import Run, Image
+from carracing_env import (
+    CarRacingDiscreteActionWrapper as CarRacingActionWrapper,
+    CarRacingPixelObsWrapper as CarRacingImageWrapper,
+    StackFrames,
+    make_env,
+)
 
 # ---------------------------------------------------------------------------- #
 #                                Constants                                     #
@@ -46,92 +52,8 @@ print(f"Using device: {device}")
 # ---------------------------------------------------------------------------- #
 #                                Wrappers                                      #
 # ---------------------------------------------------------------------------- #
-
-class CarRacingActionWrapper(gym.ActionWrapper):
-    """
-    Maps discrete actions to the continuous action space of CarRacing-v3.
-    Discrete Actions:
-    0: Do nothing
-    1: Turn Left
-    2: Turn Right
-    3: Gas
-    4: Brake
-    """
-    def __init__(self, env):
-        super().__init__(env)
-        self.action_space = gym.spaces.Discrete(5)
-
-    def action(self, action):
-        if action == 0:  # Do nothing
-            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        elif action == 1:  # Turn Left
-            return np.array([-1.0, 0.0, 0.0], dtype=np.float32)
-        elif action == 2:  # Turn Right
-            return np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        elif action == 3:  # Gas
-            return np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        elif action == 4:  # Brake
-            return np.array([0.0, 0.0, 1.0], dtype=np.float32)
-        else:
-            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
-
-class CarRacingImageWrapper(gym.ObservationWrapper):
-    """
-    Preprocesses the image:
-    1. Grayscale
-    2. Crop bottom status bar
-    3. Resize to 84x84
-    """
-    def __init__(self, env):
-        super().__init__(env)
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, shape=(84, 84), dtype=np.uint8
-        )
-
-    def observation(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        cropped = gray[:84, :]
-        resized = cv2.resize(cropped, (84, 84), interpolation=cv2.INTER_AREA)
-        return resized
-
-class StackFrames(gym.Wrapper):
-    """
-    Stack the last k frames to capture motion.
-    Input shape: (84, 84) -> Output shape: (k, 84, 84)
-    """
-    def __init__(self, env, stack_size=4):
-        super().__init__(env)
-        self.stack_size = stack_size
-        self.frames = deque(maxlen=stack_size)
-        original_space = env.observation_space
-        self.observation_space = gym.spaces.Box(
-            low=0, high=255, 
-            shape=(stack_size, original_space.shape[0], original_space.shape[1]),
-            dtype=original_space.dtype
-        )
-
-    def reset(self, **kwargs):
-        observation, info = self.env.reset(**kwargs)
-        for _ in range(self.stack_size):
-            self.frames.append(observation)
-        return self._get_observation(), info
-
-    def step(self, action):
-        observation, reward, terminated, truncated, info = self.env.step(action)
-        self.frames.append(observation)
-        return self._get_observation(), reward, terminated, truncated, info
-
-    def _get_observation(self):
-        return np.stack(self.frames, axis=0)
-
-
-def make_env(render_mode=None):
-    """Create and wrap CarRacing environment"""
-    env = gym.make("CarRacing-v3", continuous=True, render_mode=render_mode)
-    env = CarRacingActionWrapper(env)
-    env = CarRacingImageWrapper(env)
-    env = StackFrames(env, stack_size=4)
-    return env
+# Wrappers and `make_env` are imported from `carracing_env.py` so they can be
+# shared across algorithms (DQN baseline, SAC+DrQ, etc.).
 
 # ---------------------------------------------------------------------------- #
 #                                DQN Model                                     #
@@ -199,10 +121,13 @@ class ReplayBuffer:
 def evaluate_policy(policy_net, env_name, num_episodes, video_dir, episode_idx, device):
     """Evaluate policy and optionally record video"""
     # Create fresh environment for evaluation
-    eval_env = gym.make(env_name, continuous=True, render_mode="rgb_array")
-    eval_env = CarRacingActionWrapper(eval_env)
-    eval_env = CarRacingImageWrapper(eval_env)
-    eval_env = StackFrames(eval_env, stack_size=4)
+    eval_env = make_env(
+        env_id=env_name,
+        render_mode="rgb_array",
+        action_mode="discrete",
+        grayscale=True,
+        frame_stack=STACK_SIZE,
+    )
     
     # Setup video recording if enabled
     video_path = None

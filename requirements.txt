@@ -1,4 +1,7 @@
-gymnasium[box2d]
+gymnasium[box2d]>=0.29.0
 torch>=2.0.0
-numpy
-opencv-python
+numpy>=1.23.0
+opencv-python>=4.8.0.0
+aim>=3.17.5
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9

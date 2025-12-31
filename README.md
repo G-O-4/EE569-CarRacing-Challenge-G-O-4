@@ -70,6 +70,52 @@ python inference.py --checkpoint checkpoints/final_model.pth --no-render
 
 ---
 
+## 🏁 High-Score Track (Recommended): SAC + DrQ (Continuous Control)
+
+The baseline DQN uses a **very coarse 5-action discretization**, which can’t smoothly steer while accelerating/braking. To push toward **850–950+**, this repo includes a **pixel-based SAC + DrQ** implementation in `train.py` (continuous 2D actions: steer + accel).
+
+### 1. Training (SAC + DrQ)
+
+```bash
+# Train for ~2M env steps (good first budget for 800+; extend to ~3M if close)
+python train.py --total-steps 2000000 --seed 1
+
+# Optional: use RGB instead of grayscale (more compute/memory)
+python train.py --total-steps 2000000 --seed 1 --rgb --frame-stack 3
+```
+
+**Outputs:**
+- Checkpoints in `./checkpoints/`: `best_sac_drq.pth`, `last_sac_drq.pth`, `final_sac_drq.pth`
+- Aim logs (if enabled): run `aim up`
+
+### 2. Evaluation / Video (SAC + DrQ)
+
+```bash
+# Evaluate best checkpoint (3 episodes, no rendering)
+python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --episodes 3 --no-render
+
+# Save a video of the best checkpoint
+python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --episodes 1 --save-video --video-dir ./videos
+```
+
+---
+
+## 🔬 Suggested Experiment Matrix (6+ runs)
+
+Keep runs **step-budgeted** and early-stop stalled configs (balanced score + sample-efficiency).
+
+| Run | Change | Example command | Step budget |
+|-----|--------|------------------|------------|
+| 1 | SAC (grayscale) + DrQ (default) | `python train.py --total-steps 2000000 --seed 1` | 2.0M |
+| 2 | Reward scale sweep | `python train.py --total-steps 2000000 --seed 1 --reward-scale 0.1` | 2.0M |
+| 3 | Batch / updates-per-step sweep | `python train.py --total-steps 2000000 --seed 1 --batch-size 256 --updates-per-step 2` | 2.0M |
+| 4 | Encoder size sweep | `python train.py --total-steps 2000000 --seed 1 --feature-dim 50 --hidden-dim 512` | 2.0M |
+| 5 | RGB vs grayscale | `python train.py --total-steps 2000000 --seed 1 --rgb --frame-stack 3` | 2.0M |
+| 6 | Action repeat | `python train.py --total-steps 2000000 --seed 1 --action-repeat 2` | 2.0M |
+| 7 | Seed robustness | `python train.py --total-steps 1000000 --seed 2` | 1.0–2.0M |
+
+---
+
 ## 📊 Deliverables
 
 Submit a single ZIP file containing:
