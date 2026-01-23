@@ -23,9 +23,9 @@ class SACConfig:
 
     # Replay / updates
     # Memory usage: each transition stores 2 x (stack x 84 x 84) uint8 images.
-    # With stack=4: ~56 KB per transition, so 50k ≈ 2.8 GB RAM (pre-allocated).
-    # Reduce to 30k (~1.7 GB) if your system has ≤8 GB RAM or WSL2 is memory-constrained.
-    replay_size: int = 50_000
+    # With stack=4: ~56 KB per transition, so 30k ≈ 1.7 GB RAM (pre-allocated).
+    # WSL2 users: if OOM, reduce further or increase WSL2 memory limit via .wslconfig
+    replay_size: int = 30_000
     batch_size: int = 256
     start_steps: int = 10_000
     update_after: int = 10_000
