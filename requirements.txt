@@ -6,3 +6,4 @@ aim>=3.17.5
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.9
 moviepy>=1.0.3
+stable-baselines3[extra]>=2.2.0

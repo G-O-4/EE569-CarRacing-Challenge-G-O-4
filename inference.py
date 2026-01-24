@@ -5,17 +5,30 @@ import torch
 import numpy as np
 from gymnasium.wrappers import RecordVideo
 
-from carracing_env import make_env
+from carracing_env import make_env, make_eval_env_ppo
 from dqn_car_racing import DQN
 from sac_drq import SACAgent, SACConfig
 
-def detect_algo(checkpoint: dict) -> str:
-    if isinstance(checkpoint, dict) and checkpoint.get("algo") == "sac_drq":
-        return "sac_drq"
-    if isinstance(checkpoint, dict) and "agent" in checkpoint and "actor" in checkpoint.get("agent", {}):
-        return "sac_drq"
-    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-        return "dqn"
+
+def detect_algo(checkpoint_path: str, checkpoint_data=None) -> str:
+    """
+    Detect algorithm from checkpoint path or data.
+    - .zip files are PPO (stable-baselines3 format)
+    - .pth files are DQN or SAC+DrQ (PyTorch format)
+    """
+    # PPO checkpoints are .zip files
+    if checkpoint_path.endswith(".zip"):
+        return "ppo"
+    
+    # For .pth files, check the checkpoint content
+    if checkpoint_data is not None:
+        if isinstance(checkpoint_data, dict) and checkpoint_data.get("algo") == "sac_drq":
+            return "sac_drq"
+        if isinstance(checkpoint_data, dict) and "agent" in checkpoint_data and "actor" in checkpoint_data.get("agent", {}):
+            return "sac_drq"
+        if isinstance(checkpoint_data, dict) and "model_state_dict" in checkpoint_data:
+            return "dqn"
+    
     return "unknown"
 
 
@@ -71,6 +84,21 @@ def load_sac_drq(checkpoint_path, device):
 
     return agent, cfg
 
+def load_ppo(checkpoint_path, device):
+    """Load a PPO model from stable-baselines3 checkpoint (.zip)."""
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"❌ Checkpoint not found: {checkpoint_path}")
+    
+    from stable_baselines3 import PPO
+    
+    # SB3 handles device automatically, but we can specify
+    device_str = "cuda" if device.type == "cuda" else "cpu"
+    model = PPO.load(checkpoint_path, device=device_str)
+    
+    print(f"✅ Loaded PPO checkpoint: {checkpoint_path}")
+    return model
+
+
 def run_episode(env, policy, device, render=True):
     """Run a single episode and return total reward (works for DQN or SAC)."""
     state, _ = env.reset()
@@ -98,6 +126,29 @@ def run_episode(env, policy, device, render=True):
     
     return total_reward
 
+
+def run_episode_ppo(env, model, deterministic=True):
+    """
+    Run a single episode with PPO model (uses VecEnv).
+    Returns total reward.
+    """
+    obs = env.reset()
+    total_reward = 0.0
+    done = False
+    
+    while not done:
+        action, _ = model.predict(obs, deterministic=deterministic)
+        obs, reward, done_arr, info = env.step(action)
+        total_reward += float(reward[0])
+        done = done_arr[0]
+        
+        # Check for episode end in info (VecEnv wraps terminal obs)
+        if done and "episode" in info[0]:
+            # Use the actual episode reward from info
+            total_reward = info[0]["episode"]["r"]
+    
+    return total_reward
+
 def main():
     parser = argparse.ArgumentParser(
         description='Load and run trained DQN on CarRacing-v3',
@@ -122,8 +173,14 @@ Examples:
                        help='Directory to save videos (default: ./videos)')
     parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cpu', 'cuda'],
                        help='Device to use (default: auto)')
-    parser.add_argument('--algo', type=str, default='auto', choices=['auto', 'dqn', 'sac_drq'],
+    parser.add_argument('--algo', type=str, default='auto', choices=['auto', 'dqn', 'sac_drq', 'ppo'],
                        help='Which algorithm checkpoint to load (default: auto-detect)')
+    parser.add_argument('--grayscale', action='store_true', default=True,
+                       help='Use grayscale for PPO (default)')
+    parser.add_argument('--rgb', action='store_true',
+                       help='Use RGB for PPO')
+    parser.add_argument('--frame-stack', type=int, default=4,
+                       help='Frame stack size for PPO (default: 4)')
     
     args = parser.parse_args()
     
@@ -139,13 +196,25 @@ Examples:
     render_mode = 'rgb_array' if args.save_video else ('human' if not args.no_render else None)
     env = None
     
-    # Wrap with video recorder if needed
+    # Detect algorithm and load checkpoint
     print(f"\n📂 Loading checkpoint: {args.checkpoint}")
-    raw = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    detected = detect_algo(raw)
-    algo = detected if args.algo == "auto" else args.algo
+    
+    # Determine grayscale setting for PPO
+    grayscale = True
+    if args.rgb:
+        grayscale = False
+    
+    # Detect algorithm from file extension first, then content
+    if args.algo != "auto":
+        algo = args.algo
+    elif args.checkpoint.endswith(".zip"):
+        algo = "ppo"
+    else:
+        raw = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        algo = detect_algo(args.checkpoint, raw)
 
     if algo == "dqn":
+        raw = torch.load(args.checkpoint, map_location=device, weights_only=False)
         env = make_env(render_mode=render_mode, action_mode="discrete", grayscale=True, frame_stack=4)
         if args.save_video:
             os.makedirs(args.video_dir, exist_ok=True)
@@ -169,8 +238,33 @@ Examples:
             env = RecordVideo(env, args.video_dir, name_prefix="inference_sac_drq")
             print(f"🎬 Video recording enabled, saving to: {args.video_dir}")
         policy = agent
+    elif algo == "ppo":
+        # PPO uses VecEnv with VecFrameStack
+        from stable_baselines3.common.vec_env import VecVideoRecorder
+        
+        env = make_eval_env_ppo(
+            env_id="CarRacing-v3",
+            render_mode=render_mode,
+            grayscale=grayscale,
+            frame_stack=args.frame_stack,
+            action_repeat=1,
+            seed=42,
+        )
+        
+        if args.save_video:
+            os.makedirs(args.video_dir, exist_ok=True)
+            env = VecVideoRecorder(
+                env,
+                args.video_dir,
+                record_video_trigger=lambda x: True,  # Record all episodes
+                video_length=2000,
+                name_prefix="inference_ppo",
+            )
+            print(f"🎬 Video recording enabled, saving to: {args.video_dir}")
+        
+        policy = load_ppo(args.checkpoint, device)
     else:
-        raise ValueError(f"Could not determine algorithm (detected={detected!r}). Pass --algo dqn or --algo sac_drq.")
+        raise ValueError(f"Could not determine algorithm (detected={algo!r}). Pass --algo dqn, sac_drq, or ppo.")
     
     # Run episodes
     print(f"\n🏁 Running {args.episodes} episode(s)...\n")
@@ -179,7 +273,14 @@ Examples:
     try:
         for episode in range(args.episodes):
             print(f"Episode {episode + 1}/{args.episodes}...", end=" ")
-            episode_reward = run_episode(env, policy, device, render=not args.no_render)
+            
+            if algo == "ppo":
+                # PPO uses VecEnv
+                episode_reward = run_episode_ppo(env, policy, deterministic=True)
+            else:
+                # DQN and SAC use regular env
+                episode_reward = run_episode(env, policy, device, render=not args.no_render)
+            
             rewards.append(episode_reward)
             print(f"Reward: {episode_reward:.2f}")
     except KeyboardInterrupt:
