@@ -52,7 +52,7 @@ def load_sac_drq(checkpoint_path, device):
         raise FileNotFoundError(f"❌ Checkpoint not found: {checkpoint_path}")
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    algo = detect_algo(checkpoint)
+    algo = detect_algo(checkpoint_path, checkpoint)
     if algo != "sac_drq":
         raise ValueError(f"Checkpoint does not look like SAC+DrQ: {checkpoint_path}")
 
