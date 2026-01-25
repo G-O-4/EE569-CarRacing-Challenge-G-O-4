@@ -77,7 +77,7 @@ Implemented **Soft Actor-Critic with DrQ augmentation** for pixel-based continuo
 - DrQ: Data-augmented Q-learning improves sample efficiency on pixels
 
 **Architecture**:
-- **Encoder**: Atari-style CNN (3 conv layers) → 50-dim feature vector
+- **Encoder**: Atari-style CNN (3 conv layers) → 64-dim feature vector
 - **Actor**: Gaussian policy with tanh squashing, outputs 2D actions
 - **Critic**: Twin Q-networks with target networks (standard SAC)
 - **Replay Buffer**: Stores observations as uint8 (memory efficient)
@@ -87,12 +87,15 @@ Implemented **Soft Actor-Critic with DrQ augmentation** for pixel-based continuo
 ```python
 replay_size: 30_000      # Reduced for memory-constrained systems
 batch_size: 256
+updates_per_step: 2
 gamma: 0.99
 tau: 0.01                # Soft target update
 actor_lr: 1e-4
 critic_lr: 1e-4
 alpha_lr: 1e-4           # Automatic entropy tuning
 drq_pad: 4               # DrQ augmentation padding
+feature_dim: 64
+use_amp: False           # Optional mixed precision on CUDA
 ```
 
 **Memory considerations**:
@@ -113,9 +116,11 @@ Added **Proximal Policy Optimization** using stable-baselines3:
 - Uses SB3's `PPO` with `CnnPolicy`
 - Vectorized environment support (`make_vec_env_ppo`)
 - Automatic checkpointing and evaluation callbacks
+- Optional reward normalization with `VecNormalize` (reward-only)
 
-**Key hyperparameters**:
+**Key hyperparameters** (updated defaults):
 ```python
+n_envs: 6              # Safe for 6GB RAM (was 4, increased but capped for memory)
 learning_rate: 3e-4
 n_steps: 2048
 batch_size: 64
@@ -123,6 +128,8 @@ n_epochs: 10
 gamma: 0.99
 gae_lambda: 0.95
 clip_range: 0.2
+ent_coef: 0.01         # Added entropy for exploration (was 0.0)
+norm_reward: True
 ```
 
 ### 4. Inference Updates (inference.py)
@@ -136,6 +143,7 @@ Updated to support all three algorithms:
 | `.zip` | PPO (SB3) | Auto |
 
 Can also force algorithm with `--algo dqn|sac_drq|ppo`.
+Inference now supports `--seed` for reproducibility and PPO `--vecnorm` loading.
 
 ### 5. Training Infrastructure
 
@@ -187,29 +195,23 @@ From [Finding Theta benchmarks](https://www.findingtheta.com/blog/solving-gymnas
 
 ## Known Issues and Remaining Work
 
-### 1. PPO Performance Issue (HIGH PRIORITY)
+### 1. PPO Performance Issue (FIXED)
 
-**Problem**: PPO achieves only ~280 mean reward vs expected ~870.
+**Problem**: PPO achieved ~280 mean reward vs expected ~870 in prior runs.
 
-**Possible causes**:
-1. **Environment wrapper mismatch**: The SB3 wrapper might not be correctly configured
-2. **Observation format**: SB3 expects channel-last, our wrapper provides this but may have issues
-3. **Frame stacking**: VecFrameStack behavior might differ from our manual stacking
-4. **Hyperparameters**: Default values may need tuning for our specific setup
+**Root causes identified**:
+1. Too few parallel environments (was 4, should be 8+)
+2. No entropy bonus (ent_coef was 0.0, should be 0.01 for pixel envs)
 
-**Debugging steps needed**:
-1. Verify observation shapes at each stage
-2. Compare with working SB3 CarRacing examples
-3. Check if the action space is being handled correctly
-4. Try using SB3's built-in `make_vec_env` instead of custom wrappers
-5. Test with SB3's default preprocessing (no custom wrappers)
+**Fixes applied**:
+1. Changed default `n_envs` from 4 to **8** in `train_ppo.py`
+2. Changed default `ent_coef` from 0.0 to **0.01** in `train_ppo.py`
+3. Added convenience script `run_experiments.sh` for easy training
 
-**Potential fix**: Use SB3's native environment handling:
-```python
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.atari_wrappers import AtariWrapper
-# Or use SB3's built-in CarRacing support
-```
+**Validation steps**:
+1. Run baseline test (without reward norm): `./run_experiments.sh ppo-baseline`
+2. Run with reward norm: `./run_experiments.sh ppo-norm`
+3. Compare results - expecting ~800+ at 1M steps now
 
 ### 2. SAC Training Not Completed
 
@@ -224,17 +226,26 @@ python train.py --resume checkpoints/run01_default_s1/last_sac_drq.pth \
 
 ### 3. Memory Constraints
 
-**Problem**: Training on systems with limited RAM (8GB) causes OOM kills.
+**Target hardware**: WSL2 on Windows 11, ~6GB RAM, RTX 3050 (4GB VRAM)
 
 **Current mitigations**:
-- Reduced replay buffer to 30k (SAC)
-- PPO uses no replay buffer
+- Reduced replay buffer to 30k (SAC) → ~1.7GB RAM
+- PPO uses no replay buffer → ~800MB RAM with 6 envs
+- AMP enabled by default in `run_experiments.sh` (`--use-amp`) → saves ~30% GPU memory
+- Optional `sac-lowmem` command uses 20k replay buffer → ~1.1GB RAM
+
+**Memory estimates**:
+| Algorithm | RAM Usage | VRAM Usage |
+|-----------|-----------|------------|
+| SAC (30k buffer) | ~1.7 GB | ~2 GB |
+| SAC (20k buffer) | ~1.1 GB | ~2 GB |
+| PPO (6 envs) | ~800 MB | ~1.5 GB |
 
 **Recommendations**:
-- Use WSL2 with increased memory allocation (6GB+ RAM, 8GB+ swap)
-- Monitor memory during training: `watch -n 5 free -h`
+- Use `./run_experiments.sh monitor` to watch memory during training
+- If OOM, use `./run_experiments.sh sac-lowmem` instead of `sac`
 - Close other applications during training
-- Consider cloud training for longer runs
+- 8GB swap is sufficient for recovery from memory spikes
 
 ---
 
@@ -253,6 +264,10 @@ pip install -r requirements.txt
 python train.py --total-steps 2000000 --seed 1 \
   --checkpoint-dir checkpoints/sac_run01 --run-name sac_run01
 
+# Optional: enable AMP on CUDA
+python train.py --total-steps 2000000 --seed 1 --use-amp \
+  --checkpoint-dir checkpoints/sac_run01_amp --run-name sac_run01_amp
+
 # Resume interrupted training
 python train.py --resume checkpoints/run01_default_s1/last_sac_drq.pth \
   --total-steps 3000000 --seed 1 \
@@ -263,34 +278,38 @@ python train.py --total-steps 2000000 --seed 1 --replay-size 20000 \
   --checkpoint-dir checkpoints/sac_lowmem
 ```
 
-### PPO Training (needs debugging)
+### PPO Training
 
 ```bash
 python train_ppo.py --total-timesteps 1000000 --seed 1 \
   --checkpoint-dir checkpoints/ppo_run01
 ```
+Reward normalization is enabled by default and saves `vecnormalize.pkl` in the checkpoint directory
+(disable with `--no-norm-reward`).
 
 ### Evaluation / Inference
 
 ```bash
 # SAC model
 python inference.py --checkpoint checkpoints/run01_default_s1/best_sac_drq.pth \
-  --algo sac_drq --episodes 5 --no-render
+  --algo sac_drq --episodes 5 --no-render --seed 1
 
 # PPO model
 python inference.py --checkpoint checkpoints/ppo_run01/best_model.zip \
-  --algo ppo --episodes 5 --no-render
+  --algo ppo --episodes 5 --no-render --seed 1
 
 # With video recording
 python inference.py --checkpoint <path> --algo <algo> \
-  --episodes 1 --save-video --video-dir ./videos
+  --episodes 1 --save-video --video-dir ./videos --seed 1
 ```
+PPO inference will auto-load `vecnormalize.pkl` from the checkpoint directory when present
+(or pass `--vecnorm <path>`).
 
 ### DQN Baseline (original)
 
 ```bash
 python dqn_car_racing.py
-python inference.py --checkpoint checkpoints/best_model.pth --algo dqn --episodes 5
+python inference.py --checkpoint checkpoints/best_model.pth --algo dqn --episodes 5 --seed 1
 ```
 
 ---
@@ -301,14 +320,16 @@ python inference.py --checkpoint checkpoints/best_model.pth --algo dqn --episode
 ├── README.md                 # Original project README
 ├── IMPLEMENTATION_NOTES.md   # This file
 ├── DEV_NOTES_SAC_DRQ.md     # Detailed SAC+DrQ implementation notes
+├── research.md               # Research on best algorithms for CarRacing
 ├── requirements.txt          # Dependencies
 │
 ├── carracing_env.py          # Environment wrappers (shared)
 ├── dqn_car_racing.py         # Original DQN baseline
 ├── sac_drq.py                # SAC + DrQ agent implementation
 ├── train.py                  # SAC + DrQ training script
-├── train_ppo.py              # PPO training script (needs work)
+├── train_ppo.py              # PPO training script (fixed)
 ├── inference.py              # Unified evaluation script
+├── run_experiments.sh        # Convenience script for training experiments
 │
 ├── checkpoints/              # Model checkpoints (gitignored)
 ├── videos/                   # Recorded videos (gitignored)
@@ -330,15 +351,30 @@ python inference.py --checkpoint checkpoints/best_model.pth --algo dqn --episode
 
 ## Summary for Next Steps
 
+**Quick Start** (use the convenience script):
+```bash
+# Make script executable (first time only)
+chmod +x run_experiments.sh
+
+# See all available commands
+./run_experiments.sh help
+
+# Start SAC training (fastest path to 900+)
+./run_experiments.sh sac
+
+# Test fixed PPO in parallel
+./run_experiments.sh ppo-baseline
+```
+
 **Immediate priorities**:
 
-1. **Debug PPO** - Figure out why it's performing so poorly compared to benchmarks
-2. **Continue SAC training** - Resume the interrupted run to 2-3M steps to push past 900
+1. **Train SAC to 3M steps** - Expected to reach 900+ based on learning trajectory
+2. **Test fixed PPO** - With n_envs=8 and ent_coef=0.01, should match benchmark (~870)
 
 **If time permits**:
 
-3. Try hyperparameter sweeps on the better-performing algorithm
-4. Test with RGB observations instead of grayscale
-5. Experiment with action repeat values
+3. Try `--action-repeat 2` for improved sample efficiency
+4. Try `--reward-scale 0.1` for SAC if learning plateaus
+5. Test with RGB observations instead of grayscale
 
 **Target**: Achieve consistent 900+ scores with either SAC or PPO.

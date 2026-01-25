@@ -1,4 +1,5 @@
 import math
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -30,7 +31,7 @@ class SACConfig:
     start_steps: int = 10_000
     update_after: int = 10_000
     update_every: int = 1
-    updates_per_step: int = 1
+    updates_per_step: int = 2
 
     # SAC hyperparams
     gamma: float = 0.99
@@ -42,7 +43,7 @@ class SACConfig:
     target_entropy: Optional[float] = None  # if None => -action_dim
 
     # Model sizes
-    feature_dim: int = 50
+    feature_dim: int = 64
     hidden_dim: int = 1024
 
     # DrQ augmentation
@@ -51,6 +52,7 @@ class SACConfig:
     # Misc
     reward_scale: float = 1.0
     grad_clip_norm: float = 10.0
+    use_amp: bool = False
 
 
 def random_shift(x: torch.Tensor, pad: int = 4) -> torch.Tensor:
@@ -222,6 +224,8 @@ class SACAgent:
         self.cfg = cfg
         self.device = device
         self.action_dim = int(action_dim)
+        self.use_amp = bool(cfg.use_amp) and device.type == "cuda"
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
         self.critic = Critic(obs_shape, action_dim, cfg.feature_dim, cfg.hidden_dim).to(device)
         self.critic_target = Critic(obs_shape, action_dim, cfg.feature_dim, cfg.hidden_dim).to(device)
@@ -269,40 +273,69 @@ class SACAgent:
 
         rewards = rewards * cfg.reward_scale
 
-        with torch.no_grad():
-            next_h = self.critic.encoder(next_obs)
-            next_action, next_logp, _ = self.actor.sample(next_h)
-            target_q1, target_q2 = self.critic_target(next_obs, next_action, detach_encoder=False)
-            target_v = torch.min(target_q1, target_q2) - self.alpha * next_logp
-            target_q = rewards + (1.0 - dones) * cfg.gamma * target_v
+        amp_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
 
-        # Critic update
-        cur_q1, cur_q2 = self.critic(obs, actions, detach_encoder=False)
-        critic_loss = F.mse_loss(cur_q1, target_q) + F.mse_loss(cur_q2, target_q)
+        with amp_ctx():
+            with torch.no_grad():
+                next_h = self.critic.encoder(next_obs)
+                next_action, next_logp, _ = self.actor.sample(next_h)
+                target_q1, target_q2 = self.critic_target(next_obs, next_action, detach_encoder=False)
+                target_v = torch.min(target_q1, target_q2) - self.alpha * next_logp
+                target_q = rewards + (1.0 - dones) * cfg.gamma * target_v
+
+            # Critic update
+            h = self.critic.encoder(obs)
+            h_action = torch.cat([h, actions], dim=-1)
+            cur_q1 = self.critic.q1(h_action)
+            cur_q2 = self.critic.q2(h_action)
+            critic_loss = F.mse_loss(cur_q1, target_q) + F.mse_loss(cur_q2, target_q)
 
         self.critic_opt.zero_grad(set_to_none=True)
-        critic_loss.backward()
-        if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
-            nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=cfg.grad_clip_norm)
-        self.critic_opt.step()
+        if self.use_amp:
+            self.scaler.scale(critic_loss).backward()
+            self.scaler.unscale_(self.critic_opt)
+            if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+                nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=cfg.grad_clip_norm)
+            self.scaler.step(self.critic_opt)
+            self.scaler.update()
+        else:
+            critic_loss.backward()
+            if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+                nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=cfg.grad_clip_norm)
+            self.critic_opt.step()
 
         # Actor + alpha update (encoder detached)
-        h = self.critic.encoder(obs).detach()
-        pi, logp, _ = self.actor.sample(h)
-        q1_pi, q2_pi = self.critic(obs, pi, detach_encoder=True)
-        min_q_pi = torch.min(q1_pi, q2_pi)
-        actor_loss = (self.alpha * logp - min_q_pi).mean()
+        h_detached = h.detach()
+        with amp_ctx():
+            pi, logp, _ = self.actor.sample(h_detached)
+            q1_pi = self.critic.q1(torch.cat([h_detached, pi], dim=-1))
+            q2_pi = self.critic.q2(torch.cat([h_detached, pi], dim=-1))
+            min_q_pi = torch.min(q1_pi, q2_pi)
+            actor_loss = (self.alpha * logp - min_q_pi).mean()
 
         self.actor_opt.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
-            nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=cfg.grad_clip_norm)
-        self.actor_opt.step()
+        if self.use_amp:
+            self.scaler.scale(actor_loss).backward()
+            self.scaler.unscale_(self.actor_opt)
+            if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+                nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=cfg.grad_clip_norm)
+            self.scaler.step(self.actor_opt)
+            self.scaler.update()
+        else:
+            actor_loss.backward()
+            if cfg.grad_clip_norm is not None and cfg.grad_clip_norm > 0:
+                nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=cfg.grad_clip_norm)
+            self.actor_opt.step()
 
         alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
         self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
-        self.alpha_opt.step()
+        if self.use_amp:
+            self.scaler.scale(alpha_loss).backward()
+            self.scaler.step(self.alpha_opt)
+            self.scaler.update()
+        else:
+            alpha_loss.backward()
+            self.alpha_opt.step()
 
         # Soft update target critic
         with torch.no_grad():

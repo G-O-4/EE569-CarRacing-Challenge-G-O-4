@@ -22,7 +22,7 @@ from stable_baselines3.common.callbacks import (
     EvalCallback,
 )
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
+from stable_baselines3.common.vec_env import VecNormalize
 
 from carracing_env import make_vec_env_ppo, make_eval_env_ppo
 
@@ -70,14 +70,21 @@ def main():
 
     # Training params
     parser.add_argument("--total-timesteps", type=int, default=1_000_000, help="Total training timesteps")
-    parser.add_argument("--seed", type=int, default=1, help="Random seed")
-    parser.add_argument("--n-envs", type=int, default=1, help="Number of parallel environments")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed (set to -1 for random)")
+    parser.add_argument("--n-envs", type=int, default=6, help="Number of parallel environments (6 is safe for 6GB RAM)")
 
     # Environment params
     parser.add_argument("--grayscale", action="store_true", default=True, help="Use grayscale (default)")
     parser.add_argument("--rgb", action="store_true", help="Use RGB observations")
     parser.add_argument("--frame-stack", type=int, default=4, help="Number of frames to stack")
     parser.add_argument("--action-repeat", type=int, default=1, help="Repeat each action N times")
+    parser.add_argument(
+        "--no-norm-reward",
+        dest="norm_reward",
+        action="store_false",
+        help="Disable reward normalization (VecNormalize)",
+    )
+    parser.add_argument("--clip-reward", type=float, default=10.0, help="Reward clip for VecNormalize")
 
     # PPO hyperparams
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate")
@@ -87,7 +94,7 @@ def main():
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda")
     parser.add_argument("--clip-range", type=float, default=0.2, help="PPO clip range")
-    parser.add_argument("--ent-coef", type=float, default=0.0, help="Entropy coefficient")
+    parser.add_argument("--ent-coef", type=float, default=0.01, help="Entropy coefficient")
     parser.add_argument("--vf-coef", type=float, default=0.5, help="Value function coefficient")
     parser.add_argument("--max-grad-norm", type=float, default=0.5, help="Max gradient norm")
 
@@ -121,6 +128,9 @@ def main():
     print(f"  Grayscale: {grayscale}")
     print(f"  Frame stack: {args.frame_stack}")
     print(f"  Checkpoint dir: {args.checkpoint_dir}")
+    print(f"  Reward normalization: {args.norm_reward}")
+
+    seed = None if args.seed is None or int(args.seed) < 0 else int(args.seed)
 
     # Create training environment
     env = make_vec_env_ppo(
@@ -129,19 +139,38 @@ def main():
         grayscale=grayscale,
         frame_stack=args.frame_stack,
         action_repeat=args.action_repeat,
-        seed=args.seed,
+        seed=seed,
         use_subproc=False,  # DummyVecEnv is safer for most setups
     )
 
+    # Reward normalization (optional)
+    if args.norm_reward:
+        vecnorm_path = None
+        if args.resume is not None:
+            candidate = os.path.join(os.path.dirname(args.resume), "vecnormalize.pkl")
+            if os.path.exists(candidate):
+                vecnorm_path = candidate
+
+        if vecnorm_path is not None:
+            print(f"Loading VecNormalize stats from: {vecnorm_path}")
+            env = VecNormalize.load(vecnorm_path, env)
+        else:
+            env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_reward=args.clip_reward)
+
     # Create evaluation environment
+    eval_seed = None if seed is None else seed + 10000
     eval_env = make_eval_env_ppo(
         env_id="CarRacing-v3",
         render_mode=None,
         grayscale=grayscale,
         frame_stack=args.frame_stack,
         action_repeat=args.action_repeat,
-        seed=args.seed + 10000,  # Different seed for eval
+        seed=eval_seed,  # Different seed for eval
     )
+    if args.norm_reward:
+        eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
+        eval_env.training = False
+        eval_env.norm_reward = False
 
     # Initialize Aim logging
     aim_run = None
@@ -153,10 +182,12 @@ def main():
             aim_run["hparams"] = {
                 "total_timesteps": args.total_timesteps,
                 "n_envs": args.n_envs,
-                "seed": args.seed,
+                "seed": seed,
                 "grayscale": grayscale,
                 "frame_stack": args.frame_stack,
                 "action_repeat": args.action_repeat,
+                "norm_reward": args.norm_reward,
+                "clip_reward": args.clip_reward,
                 "learning_rate": args.learning_rate,
                 "n_steps": args.n_steps,
                 "batch_size": args.batch_size,
@@ -207,7 +238,7 @@ def main():
         save_path=args.checkpoint_dir,
         name_prefix="ppo_checkpoint",
         save_replay_buffer=False,
-        save_vecnormalize=False,
+        save_vecnormalize=args.norm_reward,
     )
     callbacks.append(checkpoint_callback)
 
@@ -221,6 +252,7 @@ def main():
         deterministic=True,
         render=False,
         verbose=1,
+        sync_envs_normalization=True,
     )
     callbacks.append(eval_callback)
 
@@ -245,6 +277,11 @@ def main():
     final_path = os.path.join(args.checkpoint_dir, "final_model")
     model.save(final_path)
     print(f"\nFinal model saved to: {final_path}.zip")
+
+    if args.norm_reward and isinstance(env, VecNormalize):
+        vecnorm_path = os.path.join(args.checkpoint_dir, "vecnormalize.pkl")
+        env.save(vecnorm_path)
+        print(f"VecNormalize stats saved to: {vecnorm_path}")
 
     # Print summary
     print("\n" + "=" * 60)
