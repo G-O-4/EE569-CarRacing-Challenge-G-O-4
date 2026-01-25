@@ -85,7 +85,7 @@ Implemented **Soft Actor-Critic with DrQ augmentation** for pixel-based continuo
 
 **Key hyperparameters** (in `SACConfig`):
 ```python
-replay_size: 30_000      # Reduced for memory-constrained systems
+replay_size: 70_000      # Optimized for 6GB RAM (~3.9GB usage)
 batch_size: 256
 updates_per_step: 2
 gamma: 0.99
@@ -95,13 +95,14 @@ critic_lr: 1e-4
 alpha_lr: 1e-4           # Automatic entropy tuning
 drq_pad: 4               # DrQ augmentation padding
 feature_dim: 64
-use_amp: False           # Optional mixed precision on CUDA
+use_amp: False           # Enable with --use-amp for GPU memory savings
 ```
 
 **Memory considerations**:
-- Original default was 1M replay size (~50+ GB RAM)
-- Reduced to 30k (~1.7 GB) for systems with limited RAM
+- Default 70k replay buffer uses ~3.9GB RAM (good for 6GB systems)
+- Fallback 50k uses ~2.8GB (use `--replay-size 50000` if OOM)
 - Can adjust with `--replay-size` flag
+- AMP (`--use-amp`) reduces GPU memory by ~30% on CUDA
 
 ### 3. PPO Implementation (train_ppo.py)
 
@@ -228,24 +229,28 @@ python train.py --resume checkpoints/run01_default_s1/last_sac_drq.pth \
 
 **Target hardware**: WSL2 on Windows 11, ~6GB RAM, RTX 3050 (4GB VRAM)
 
-**Current mitigations**:
-- Reduced replay buffer to 30k (SAC) → ~1.7GB RAM
+**Memory optimization** (larger buffer = better training):
+- Default replay buffer: 70k → ~3.9GB RAM (uses available memory well)
+- Low-memory fallback: 50k → ~2.8GB RAM
 - PPO uses no replay buffer → ~800MB RAM with 6 envs
-- AMP enabled by default in `run_experiments.sh` (`--use-amp`) → saves ~30% GPU memory
-- Optional `sac-lowmem` command uses 20k replay buffer → ~1.1GB RAM
+- AMP enabled by default (`--use-amp`) → saves ~30% GPU memory
 
 **Memory estimates**:
-| Algorithm | RAM Usage | VRAM Usage |
-|-----------|-----------|------------|
-| SAC (30k buffer) | ~1.7 GB | ~2 GB |
-| SAC (20k buffer) | ~1.1 GB | ~2 GB |
-| PPO (6 envs) | ~800 MB | ~1.5 GB |
+| Algorithm | RAM Usage | VRAM Usage | Notes |
+|-----------|-----------|------------|-------|
+| SAC (70k buffer) | ~3.9 GB | ~2 GB | Default - best quality |
+| SAC (50k buffer) | ~2.8 GB | ~2 GB | Use if OOM |
+| PPO (6 envs) | ~800 MB | ~1.5 GB | Lower memory alternative |
+
+**Why larger replay buffer matters**:
+- More diverse samples for training
+- Better sample efficiency (learns faster)
+- Reduces overfitting to recent experiences
 
 **Recommendations**:
 - Use `./run_experiments.sh monitor` to watch memory during training
 - If OOM, use `./run_experiments.sh sac-lowmem` instead of `sac`
-- Close other applications during training
-- 8GB swap is sufficient for recovery from memory spikes
+- 8GB swap provides safety margin for memory spikes
 
 ---
 

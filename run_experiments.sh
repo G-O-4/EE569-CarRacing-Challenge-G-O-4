@@ -19,7 +19,7 @@ mkdir -p checkpoints/ppo_with_norm
 case "${1:-help}" in
     sac)
         echo "[SAC+DrQ] Starting training to 3M steps..."
-        echo "Using: --use-amp (GPU memory savings), replay_size=30k (~1.7GB RAM)"
+        echo "Using: --use-amp, replay_size=70k (~3.9GB RAM) - optimized for 6GB system"
         echo "Expected: ~870-890 at 2M steps, 900+ at 3M steps"
         echo ""
         python train.py \
@@ -33,13 +33,13 @@ case "${1:-help}" in
     
     sac-lowmem)
         echo "[SAC+DrQ Low Memory] Training with reduced replay buffer..."
-        echo "Using: replay_size=20k (~1.1GB RAM), --use-amp"
+        echo "Using: replay_size=50k (~2.8GB RAM), --use-amp - if OOM with default"
         echo ""
         python train.py \
             --total-steps 3000000 \
             --seed 1 \
             --use-amp \
-            --replay-size 20000 \
+            --replay-size 50000 \
             --checkpoint-dir checkpoints/sac_lowmem \
             --run-name sac_lowmem \
             --no-aim
@@ -151,10 +151,12 @@ case "${1:-help}" in
         echo "  1. ./run_experiments.sh sac          # Start SAC (fastest to 900+)"
         echo "  2. ./run_experiments.sh ppo-baseline # Test PPO fixes (after SAC completes)"
         echo ""
-        echo "Memory estimates:"
-        echo "  SAC (default):  ~1.7GB RAM + ~2GB VRAM"
-        echo "  SAC (lowmem):   ~1.1GB RAM + ~2GB VRAM"
+        echo "Memory estimates (for ~6GB available RAM):"
+        echo "  SAC (default):  ~3.9GB RAM (70k buffer) + ~2GB VRAM"
+        echo "  SAC (lowmem):   ~2.8GB RAM (50k buffer) + ~2GB VRAM"
         echo "  PPO (6 envs):   ~800MB RAM + ~1.5GB VRAM"
+        echo ""
+        echo "Larger replay buffer = better sample diversity = faster learning!"
         echo ""
         ;;
 esac
