@@ -1,0 +1,593 @@
+% ============================================================================
+% Multi-Task Vision Report
+% (Completed version based on analysis_report.txt)
+%
+% This report is designed to be compiled from the `report/` folder.
+% All plots are referenced from ../analysis_metrics/.
+% ============================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------ Typography -----------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc} % harmless on modern LaTeX, useful on some toolchains
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{setspace}
+\onehalfspacing
+
+% ------------------------------ Page layout ---------------------------------
+\usepackage{geometry}
+\geometry{margin=1in}
+
+% ------------------------------ Math & symbols ------------------------------
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+% ------------------------------ Figures & tables ----------------------------
+\usepackage{graphicx}
+\graphicspath{{../analysis_metrics/}{figures/}}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{siunitx}
+\sisetup{detect-all=true}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{placeins}
+
+% ------------------------------ Lists ---------------------------------------
+\usepackage{enumitem}
+\setlist[itemize]{topsep=2pt,itemsep=2pt,parsep=0pt,partopsep=0pt}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt,parsep=0pt,partopsep=0pt}
+
+% ------------------------------ Code listings --------------------------------
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{coderule}{RGB}{220,220,220}
+\definecolor{codekw}{RGB}{0,74,173}
+\definecolor{codecom}{RGB}{90,90,90}
+\definecolor{codestr}{RGB}{163,21,21}
+\lstdefinestyle{bash}{
+  language=bash,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecom}\itshape,
+  stringstyle=\color{codestr},
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{coderule},
+  frame=single,
+  framerule=0.5pt,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  tabsize=2
+}
+
+% ------------------------------ References & links --------------------------
+\usepackage{csquotes}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=codekw,
+  citecolor=codekw,
+  urlcolor=codekw,
+  pdftitle={Multi-Task Vision: Detection and Segmentation on Pascal VOC2012},
+  pdfauthor={Ahmed Mohamed Bakory; Faisal Ali Elhouderi; Muhammed Ali Muhmoud},
+}
+
+% ------------------------------ Header/footer --------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Multi-Task Vision Report}
+\rhead{\thepage}
+
+% ------------------------------ Convenience macros ---------------------------
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{TODO:}~#1}}
+\newcommand{\eg}{e.g.\ }
+\newcommand{\ie}{i.e.\ }
+\newcommand{\etal}{et~al.\ }
+
+% ------------------------------ Project metadata ----------------------------
+\newcommand{\ReportTitle}{Multi-Task Computer Vision: Hyperparameter Sensitivity and Architecture Variants on Pascal VOC2012}
+\newcommand{\CourseName}{EE569, Deep Learning}
+\newcommand{\InstitutionName}{UOT, University of Tripoli, Libya}
+\newcommand{\AuthorList}{Ahmed Mohamed Bakory (2200207974)\\Faisal Ali Elhouderi (2200208864)\\Muhammed Ali Muhmoud (2200208982)}
+\newcommand{\Supervisor}{Dr. Nuri Benbarka}
+% TODO: replace with the actual repository URL (or a private link)
+\newcommand{\RepoURL}{\url{https://github.com/your-org/your-repo}}
+
+\begin{document}
+
+% ============================================================================
+% Title page
+% ============================================================================
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+
+  {\Huge\bfseries \ReportTitle\par}
+  \vspace{1.2cm}
+
+  {\Large \CourseName\par}
+  \vspace{0.4cm}
+  {\Large \InstitutionName\par}
+
+  \vspace{1.4cm}
+
+  \begin{tabular}{@{}r@{\hspace{1em}}l@{}}
+    \textbf{Authors:} & \parbox[t]{0.6\textwidth}{\AuthorList} \\[6em]
+    \textbf{Instructor:} & \Supervisor \\[1em]
+    \textbf{Date:} & \today \\[1em]
+    \textbf{Repository:} & \RepoURL \\
+  \end{tabular}
+
+  \vfill
+
+  {\large \textit{A reproducible study of multi-task learning for semantic segmentation and object detection.}\par}
+  \vspace*{1cm}
+\end{titlepage}
+
+% ============================================================================
+% Abstract
+% ============================================================================
+\begin{abstract}
+This report documents a controlled empirical study of training and design choices for a multi-task computer vision model that performs \emph{semantic segmentation} and \emph{object detection} on the Pascal VOC2012 dataset~\cite{everingham2010pascal}. We evaluate how core hyperparameters (learning rate, batch size, weight decay, loss weighting, preprocessing/augmentation, dropout, initialization, activation functions, and backbone depth) influence optimization stability, compute footprint, and downstream validation metrics.
+
+A significant part of the work was engineering: the initial codebase did not support automated experiment sweeps nor command-line configuration overrides. We implemented a sweep runner and an override mechanism to enable consistent, reproducible experimentation across phases. We also document a major methodological correction introduced in a second iteration of the codebase (v2): replacing an overly simplified detection setup and non-standard evaluation with a VOC-style multi-box detection pipeline and an IoU-based detection metric (mAP@0.5).
+
+\smallskip
+\noindent\textbf{Keywords:} multi-task learning; semantic segmentation; object detection; Pascal VOC; hyperparameter sweep; experiment tracking
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+% 1. Introduction
+% ============================================================================
+\section{Introduction}
+Computer vision is one of the most widely deployed areas of artificial intelligence, with applications spanning robotics, autonomous driving, industrial inspection, and medical imaging. Modern vision systems often require \emph{multiple} outputs from the same image. For example, semantic segmentation provides dense pixel-level understanding, while object detection provides instance-level localization.
+
+\medskip
+\noindent\textbf{Goal.} The goal of this project is to study the effect of hyperparameter tuning and architecture changes on a multi-task model that jointly performs:
+\begin{itemize}
+  \item \textbf{Semantic segmentation}: dense pixel-wise classification over 21 classes (20 foreground classes plus background),
+  \item \textbf{Object detection}: predicting class labels and bounding boxes for the 20 Pascal VOC foreground classes.
+\end{itemize}
+All experiments are conducted on Pascal VOC2012~\cite{everingham2010pascal} using a PyTorch/torchvision-based pipeline~\cite{paszke2019pytorch}.
+
+\medskip
+\noindent\textbf{Why sweeps.} Hyperparameters can dominate outcomes even with the same architecture: learning rate, batch size, regularization, augmentation, and multi-task loss balancing can determine whether training converges smoothly or collapses. A phase-based sweep design provides a disciplined approach to isolate effects and support evidence-based conclusions.
+
+\medskip
+\noindent\textbf{Versioning note (v1 vs v2).} The project includes a second iteration (v2) that corrects a major detection validity issue: the original detection formulation was overly simplified and the metric labeled ``mAP'' did not correspond to IoU-based bounding-box mAP. In v2 we introduced a real VOC-style multi-box target format and added an IoU-based metric (mAP@0.5, \texttt{val/map50}).
+
+\medskip
+\noindent\textbf{Contributions.}
+\begin{itemize}
+  \item A sweep mechanism that enables automated, reproducible execution of many training runs with consistent overrides.
+  \item A phase-based experimental design covering optimization, regularization, data pipeline, and architecture choices.
+  \item A structured analysis of results across phases, including compute considerations.
+  \item A v2 correction for detection target/metric validity and a brief ablation study of the corrected pipeline.
+\end{itemize}
+
+% ============================================================================
+% 2. Background: Dataset, Tasks, and Metrics
+% ============================================================================
+\section{Background: Dataset, Tasks, and Metrics}
+
+\subsection{Dataset: Pascal VOC2012}
+Pascal VOC2012 is a standard benchmark for several vision tasks. In this project we use its segmentation masks and detection annotations for 20 foreground categories (plus background for segmentation)~\cite{everingham2010pascal}. The 20 object classes are:
+\begin{itemize}
+  \item \textbf{Person},
+  \item \textbf{Animals}: bird, cat, cow, dog, horse, sheep,
+  \item \textbf{Vehicles}: aeroplane, bicycle, boat, bus, car, motorbike, train,
+  \item \textbf{Indoor objects}: bottle, chair, dining table, potted plant, sofa, tv/monitor.
+\end{itemize}
+
+\noindent\textbf{Practical download note.} While torchvision supports automatic downloading of VOC2012, the default upstream host was not reachable from our environment due to network restrictions. We therefore used the alternative dataset link provided in the course materials and placed the dataset under the configured dataset root.
+
+\subsection{Tasks}
+\paragraph{Semantic segmentation.} The segmentation head predicts a per-pixel class label. VOC segmentation includes a ``void'' label (commonly 255) for ambiguous pixels; these must be ignored in both the loss and metric computation.
+
+\paragraph{Object detection.} The detection head predicts a set of bounding boxes and their class labels. In v1, the detection formulation was simplified and did not correspond to standard VOC detection. In v2, we used torchvision-style targets with a variable number of boxes per image and class labels in \(\{1,\dots,20\}\).
+
+\subsection{Metrics}
+The primary validation metrics used throughout the study are:
+\begin{itemize}
+  \item \textbf{Pixel accuracy} (segmentation): fraction of correctly predicted non-void pixels.
+  \item \textbf{Mean Intersection-over-Union (mIoU)} (segmentation): mean of class-wise IoU values computed from the confusion matrix.
+  \item \textbf{Legacy detection score} (\texttt{val/map} in v1): a presence-based ``mAP-like'' metric derived from per-image class confidences. This score is \emph{not} IoU-based.
+  \item \textbf{VOC-style mAP@0.5} (\texttt{val/map50} in v2): IoU-based average precision at IoU threshold 0.5.
+\end{itemize}
+
+\noindent\textbf{Formal definitions (segmentation).} Let \(\Omega\) be the set of pixels in a batch, \(y_p\) the ground-truth class at pixel \(p\), and \(\hat{y}_p\) the predicted class. Let \(\mathbb{1}[\cdot]\) be the indicator function and let void pixels be those with \(y_p=255\). Pixel accuracy is:
+\[
+\mathrm{PixelAcc} =
+\frac{\sum_{p\in\Omega} \mathbb{1}[\hat{y}_p = y_p]\,\mathbb{1}[y_p\neq 255]}
+     {\sum_{p\in\Omega} \mathbb{1}[y_p\neq 255]}.
+\]
+For each class \(c\), define true positives \(\mathrm{TP}_c\), false positives \(\mathrm{FP}_c\), and false negatives \(\mathrm{FN}_c\). Then
+\(\mathrm{IoU}_c = \frac{\mathrm{TP}_c}{\mathrm{TP}_c + \mathrm{FP}_c + \mathrm{FN}_c}\),
+and \(\mathrm{mIoU} = \frac{1}{C}\sum_{c=1}^{C}\mathrm{IoU}_c\) where \(C=21\) in our implementation.
+
+\noindent\textbf{Per-class diagnostics.} In addition to aggregate values, we tracked per-class series (\texttt{val/iou\_class\_k}, \texttt{val/ap\_class\_k}) and, in v2, per-class AP@0.5 (\texttt{val/ap50\_class\_k}). These series are useful for diagnosing class imbalance and identifying which categories dominate failure modes.
+
+\subsection{Experiment tracking}
+We used Aim as the experiment tracking backend due to access constraints with other platforms. Aim logs both learning curves and system utilization (GPU memory usage, compute load, duration, etc.). This allowed us to analyze not only accuracy metrics but also compute trade-offs across phases.
+
+% ============================================================================
+% 3. Methodology
+% ============================================================================
+\section{Methodology}
+
+\subsection{Implementation overview}
+The original repository provided a baseline training pipeline with interactive prompts and no built-in sweep mechanism. To support systematic experimentation, we introduced:
+\begin{itemize}
+  \item a command-line override mechanism in \texttt{train.py} (\texttt{--run-name}, \texttt{--tags}, and repeated \texttt{--override key=value}),
+  \item a centralized experiment catalog (\texttt{sweep\_experiments.py}) that defines phases and run overrides,
+  \item a sweep orchestrator (\texttt{sweep\_runner.py}) that executes experiments, supports \texttt{--resume}, \texttt{--dry-run}, and records run status.
+\end{itemize}
+
+\subsection{How overrides and sweeps work (engineering details)}
+Each experiment is specified as a set of dotted-key overrides (for example, \texttt{training.lr=5e-4} or \texttt{data.preprocessing=standardize}). At runtime, the sweep runner converts those overrides to command-line arguments and launches the training script. This ensures the training code remains single-source-of-truth while the sweep logic remains external.
+
+\begin{lstlisting}[style=bash,caption={Example sweep execution pattern used in this project.},label={lst:sweep-example}]
+# Run a complete phase
+python sweep_runner.py --phase lr_sweep
+
+# Preview commands without training
+python sweep_runner.py --phase preprocessing --dry-run
+
+# Resume after interruption
+python sweep_runner.py --phase lr_sweep --resume
+
+# Apply extra overrides to every run (e.g., device + epochs)
+python sweep_runner.py --phase lr_sweep --extra-override system.device=cuda --extra-override system.epochs=50
+\end{lstlisting}
+
+\subsection{Model architecture (high level)}
+The multi-task model consists of a shared backbone and two heads.
+\begin{itemize}
+  \item \textbf{Backbone}: ResNet variants~\cite{he2016resnet} (ResNet18/34/50) and, in v2, FPN-style backbones for RetinaNet~\cite{lin2017focal}.
+  \item \textbf{Segmentation head}: U-Net style decoder (and, in v2, additional segmentation head options).
+  \item \textbf{Detection head}: simplified detection head in v1; RetinaNet~\cite{lin2017focal} in v2 (heavier, multi-box).
+\end{itemize}
+
+\subsection{Training setup and compute environment}
+\paragraph{Hardware.} Runs were performed on a laptop equipped with an NVIDIA RTX3050 GPU (4\,GB VRAM) and an Intel i5-134500 CPU.
+
+\paragraph{Training budget.} Unless otherwise noted (interruption or v2 constraints), runs were trained for approximately 50 epochs. In practice, some runs were interrupted and restarted (\eg one batch-size run stopped at epoch 45 and was rerun).
+
+\paragraph{System metrics.} We tracked GPU memory, utilization, temperature, and power. These signals were especially important when comparing batch size and backbone depth, and when moving from v1 to v2 where compute requirements increased.
+
+\subsection{Experiment tracking and checkpoints}
+Aim was used for centralized logging of training/validation curves and system statistics. Beyond the core metrics (train/val loss, \texttt{val/map}, \texttt{val/miou}, \texttt{val/pixel\_accuracy}), we recorded per-class series (\texttt{val/iou\_class\_k}, \texttt{val/ap\_class\_k}) and, in v2, \texttt{val/map50} and \texttt{val/ap50\_class\_k}.
+
+Checkpoints were saved during training to enable reproducibility and qualitative inspection. The original setup stored only a ``latest'' and a single ``best'' checkpoint. In v2, checkpointing was extended to store models per run id and to optionally keep best-by-mIoU and best-by-mAP@0.5 models.
+
+% ============================================================================
+% 4. Experimental Design
+% ============================================================================
+\section{Experimental Design}
+
+\subsection{Phase-based sweep design}
+The experimental plan is structured as a sequence of phases. Each phase starts from a fixed baseline configuration and varies one factor (or one tightly related group of factors) at a time. This design offers two key benefits: (i) it supports attribution (a change in metrics is plausibly caused by the changed factor), and (ii) it supports practicality under limited compute by keeping each run comparable.
+
+\subsection{Phases and run plan}
+\Cref{tab:phases} summarizes the designed phases. In practice, a small number of runs deviated from the catalog due to manual runs and renaming (documented in \Cref{sec:run-notes}).
+
+\begin{table}[H]
+\centering
+\caption{Phase plan and the main hyperparameters studied in each phase.}
+\label{tab:phases}
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
+\toprule
+\textbf{Phase} & \textbf{Runs} & \textbf{Main factor(s) varied} \\
+\midrule
+Baseline & run01 & No overrides; reference run for all comparisons. \\
+LR sweep & run02--run05 & Learning rate values: \(10^{-4}, 5\cdot10^{-4}, 2\cdot10^{-3}, 5\cdot10^{-3}\). \\
+Batch sweep & run06, run07a, run07b & Batch size study (4/8/32) compared to baseline (16). \\
+Weight decay & run08--run10, run38 & Weight decay strength (\(10^{-5}\) to \(10^{-2}\)). \\
+Loss weighting & run11--run13 & Multi-task weights \((\lambda_{seg},\lambda_{det})\). \\
+Loss functions & run14--run16 & Alternative losses (planned; v1 placeholders). \\
+Preproc/augmentation & run17--run25 & Preprocessing (none/normalize/standardize) \& augmentation (none/basic/heavy). \\
+Dropout & run26--run29 & Dropout enablement and dropout rate. \\
+Initialization & run30--run33, run39 & Init scheme (kaiming/xavier/normal) \& whether to re-init backbone. \\
+Activation & run34--run35 & Activation function variants (ReLU vs LeakyReLU vs GELU). \\
+Architecture & run36, run37 & Backbone depth (ResNet34/ResNet50) vs baseline (ResNet18). \\
+v2 ablation & run40--run42 & Detection correction + RetinaNet~\cite{lin2017focal}; augmentation and scheduler ablations. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Notes on executed runs and deviations}
+\label{sec:run-notes}
+The executed study includes a few practical deviations from the experiment catalog:
+\begin{itemize}
+  \item Some run ids and names were adjusted in the batch-size sweep to include batch size 4 (\texttt{run07a}) and to avoid confusion (\texttt{run07b}).
+  \item Two manual runs were executed outside the automated sweep: \texttt{run38} (very strong weight decay \(10^{-2}\)) and \texttt{run39} (normal initialization with \texttt{model.init\_backbone=False}).
+  \item The activation/architecture phases initially failed due to unimplemented options (marked as TODO in the starting code). After implementing the missing options, the sweeps were rerun successfully.
+  \item One batch-size run was interrupted near epoch 45 and rerun to complete the analysis.
+\end{itemize}
+
+\subsection{Metric comparability and the v2 correction}
+Segmentation metrics (pixel accuracy, mIoU) remain comparable across v1 and v2. However, detection metrics differ in definition: the legacy \texttt{val/map} is not IoU-based and should not be compared directly with \texttt{val/map50}. The v2 correction is therefore treated as a change in methodology: it makes detection evaluation more meaningful but also increases compute and changes the training objective.
+
+% ============================================================================
+% 5. Results
+% ============================================================================
+\section{Results}
+This section summarizes the observed trends across phases using the primary Aim metrics (train/val loss, \texttt{val/map}, \texttt{val/miou}, \texttt{val/pixel\_accuracy}) and, where helpful, the system metrics (GPU memory usage, power, temperature, and duration).
+
+\subsection{Baseline (run01)}
+The baseline run (run01) uses no overrides and serves as the reference point. All phase conclusions are made relative to this baseline.
+
+\subsection{Learning rate sweep}
+\label{sec:lr-sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{lr_sweep_lr.jpg}
+  \caption{Learning-rate sweep. Runs use learning rates \(10^{-4}, 5\cdot10^{-4}, 2\cdot10^{-3}, 5\cdot10^{-3}\) compared to the baseline.}
+  \label{fig:lr-sweep}
+\end{figure}
+
+The learning-rate sweep shows a classic pattern:
+\begin{itemize}
+  \item \textbf{Too low (\(10^{-4}\), run02):} training and validation loss decrease slowly; validation metrics improve slowly and end below the baseline. Pixel accuracy appears unstable early due to slow learning.
+  \item \textbf{Sweet spot (\(5\cdot10^{-4}\), run03; \(2\cdot10^{-3}\), run04):} these settings provide the best overall trade-off across metrics. Qualitatively, run03 is slightly stronger for segmentation (mIoU), while run04 is competitive and stable.
+  \item \textbf{Too high (\(5\cdot10^{-3}\), run05):} performance degrades, especially in segmentation, and the validation loss exhibits noticeable spikes mid-training.
+\end{itemize}
+
+A key takeaway is that \textbf{learning-rate scheduling} can have a dramatic effect on convergence (further illustrated in v2 by run42).
+
+\subsection{Batch size sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{lr_sweep_batch.jpg}
+  \caption{Batch-size sweep. Batch size affects both training stability and compute footprint (GPU memory, power, and temperature).}
+  \label{fig:batch-sweep}
+\end{figure}
+
+The batch-size sweep compares batch sizes 4, 8, and 32 against the baseline batch size 16:
+\begin{itemize}
+  \item Validation curves are broadly similar, but \textbf{very small batch size (4)} slightly underperforms on segmentation (lower mIoU).
+  \item \textbf{Larger batch size (32)} trends slightly better on detection (steeper improvement in \texttt{val/map}) but increases GPU memory consumption to near the VRAM limit.
+  \item System telemetry shows a clear scaling: batch size 4 uses substantially less GPU memory than batch size 16, while batch size 32 approaches full utilization; power and temperature increase accordingly.
+\end{itemize}
+
+\subsection{Weight decay sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{wd_sweep.jpg}
+  \caption{Weight-decay sweep. Strong regularization reduces performance, especially for detection.}
+  \label{fig:wd-sweep}
+\end{figure}
+
+Varying weight decay strongly affects the optimization trajectory:
+\begin{itemize}
+  \item Strong weight decay (\(10^{-3}\), run10) and very strong weight decay (\(10^{-2}\), run38) significantly degrade detection, driving \texttt{val/map} close to zero.
+  \item Moderate values (\(10^{-5}\), run08; \(10^{-4}\), run09) are closer to the baseline.
+  \item Surprisingly, the \textbf{best overall performance was achieved with no weight decay} (baseline), suggesting that this specific setup benefits more from representational capacity than from strong L2 regularization.
+\end{itemize}
+
+\subsection{Loss weighting sweep (multi-task balance)}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{wd_sweep_loss.jpg}
+  \caption{Loss-weighting sweep. Multi-task loss balancing affects segmentation and detection differently.}
+  \label{fig:loss-weight-sweep}
+\end{figure}
+
+We tested loss reweighting between segmentation and detection:
+\begin{itemize}
+  \item \textbf{Segmentation emphasis (run11):} produces poorer loss curves overall, yet can improve detection \texttt{val/map} relative to some alternatives.
+  \item \textbf{Detection emphasis (run12):} unexpectedly yields the best segmentation outcome (mIoU) among the loss-weight variants, suggesting that stronger detection gradients may help the shared backbone learn more transferable features.
+  \item \textbf{Slight detection bias (run13):} provides a balanced trade-off and performs competitively across both tasks; it is close to the baseline.
+\end{itemize}
+
+\subsection{Loss function sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{loss_function_sweep.jpg}
+  \caption{Loss-function sweep. In v1, alternative losses were configured but not implemented, resulting in negligible differences.}
+  \label{fig:loss-fn-sweep}
+\end{figure}
+
+Changing \texttt{training.seg\_loss} and \texttt{training.det\_loss} in v1 produced no meaningful change because the corresponding loss implementations were placeholders. This negative result is important: \textbf{a configuration knob is only meaningful if it is wired to real code}. In v2, several of these gaps were addressed.
+
+\subsection{Preprocessing and augmentation sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{preprocessing_sweep.jpg}
+  \caption{Preprocessing and augmentation sweep. Standardization and augmentation substantially improve generalization.}
+  \label{fig:preproc-sweep}
+\end{figure}
+
+This sweep combines preprocessing choices (none/normalize/standardize) with augmentation levels (none/basic/heavy):
+\begin{itemize}
+  \item Runs with \textbf{no augmentation} underperform clearly across metrics, emphasizing the importance of data augmentation for both tasks.
+  \item The \textbf{best-performing configuration} is standardization with basic augmentation (run18), with run25 (same recipe + batch size 32) very close.
+  \item In the original codebase, \textbf{heavy augmentation was not functionally different from basic augmentation}; this was corrected in v2.
+  \item Standardization (ImageNet mean/std) performs best; ``normalize'' is slightly worse than both standardize and none in this setup.
+\end{itemize}
+
+\subsection{Dropout sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{dropout_sweep.jpg}
+  \caption{Dropout sweep. Higher dropout increases training loss and harms segmentation quality.}
+  \label{fig:dropout-sweep}
+\end{figure}
+
+Dropout primarily impacts segmentation:
+\begin{itemize}
+  \item As dropout increases, training loss increases (expected).
+  \item Detection metrics are relatively insensitive to dropout in this setup.
+  \item Segmentation quality (mIoU) decreases as dropout increases, suggesting the segmentation head benefits from lower dropout when using a ResNet-style encoder.
+\end{itemize}
+
+\subsection{Initialization sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{initialization_sweep.jpg}
+  \caption{Initialization sweep. Initialization scheme and whether the backbone is re-initialized influence stability and final metrics.}
+  \label{fig:init-sweep}
+\end{figure}
+
+We explored three initialization schemes (normal, xavier, kaiming) and whether the backbone should be re-initialized:
+\begin{itemize}
+  \item Normal initialization tends to underperform compared to xavier and kaiming.
+  \item Keeping the backbone initialization unchanged (\texttt{init\_backbone=False}) tends to yield more stable learning dynamics than re-initializing it.
+  \item Xavier initialization provides strong detection (higher \texttt{val/map}), while kaiming with unchanged backbone is slightly stronger for segmentation (mIoU).
+\end{itemize}
+
+\subsection{Activation sweep}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{activation_sweep.jpg}
+  \caption{Activation sweep. GELU outperforms ReLU/LeakyReLU in this study; LeakyReLU shows less stable validation loss.}
+  \label{fig:activation-sweep}
+\end{figure}
+
+Activation functions affect both stability and final performance:
+\begin{itemize}
+  \item LeakyReLU performs worse than ReLU across metrics and shows a spike in validation loss.
+  \item GELU achieves the best overall performance among the tested activations.
+\end{itemize}
+
+\subsection{Architecture sweep (backbone depth)}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{architecture_sweep.jpg}
+  \caption{Architecture sweep. ResNet50 is more compute-intensive; ResNet18 remains a strong efficiency-quality candidate.}
+  \label{fig:arch-sweep}
+\end{figure}
+
+Backbone depth introduces a compute--quality trade-off:
+\begin{itemize}
+  \item ResNet34 underperforms and exhibits occasional spikes in validation loss.
+  \item ResNet50 is the most memory demanding and provides a small improvement in detection (\texttt{val/map}) but not necessarily in segmentation (mIoU).
+  \item ResNet18 remains a strong baseline due to its lower compute footprint and competitive performance.
+\end{itemize}
+
+\subsection{v2 ablation: corrected detection pipeline}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{v2_abilation_sweep.jpg}
+  \caption{v2 ablation sweep. v2 introduces a corrected detection pipeline (RetinaNet~\cite{lin2017focal} + mAP@0.5) and explores augmentation and scheduling.}
+  \label{fig:v2-sweep}
+\end{figure}
+
+In v2, we replaced the simplified detection path with a RetinaNet-based detector~\cite{lin2017focal} and introduced \texttt{val/map50}.
+\begin{itemize}
+  \item \textbf{Run40 (v2 baseline)} establishes the corrected pipeline without pretraining for fair comparison.
+  \item \textbf{Run41} adds basic augmentation; curves improve but still show late-epoch degradation in \texttt{map50} and mIoU.
+  \item \textbf{Run42} adds cosine learning-rate scheduling and yields a substantial improvement in both metrics and loss stability. This confirms that scheduling can move training into a better region, especially for harder detection objectives.
+\end{itemize}
+
+Compute-wise, v2 is significantly heavier: GPU memory reaches roughly 95\% utilization and duration increases noticeably relative to v1.
+
+\FloatBarrier
+
+% ============================================================================
+% 6. Discussion
+% ============================================================================
+\section{Discussion}
+
+\subsection{Key insights across phases}
+\paragraph{Optimization dominates early success.} The learning-rate sweep shows that even small changes can shift training from underfitting (too low LR) to instability (too high LR). In v2, the scheduler ablation (run42) reinforced this: scheduling can be a decisive factor for convergence, especially when the detection objective is harder.
+
+\paragraph{Augmentation is a first-class lever.} Preprocessing and augmentation had the clearest impact on validation metrics. Standardization with basic augmentation consistently improved results, while no-augmentation runs underperformed. This aligns with the expected role of augmentation in reducing overfitting and improving invariance.
+
+\paragraph{Regularization needs calibration.} Weight decay and dropout can easily over-regularize this pipeline. Strong weight decay degraded detection sharply, and increasing dropout reduced segmentation quality. These results suggest that, given the limited model capacity and dataset size, the best regularization strategy is moderate (or minimal) explicit regularization combined with strong data augmentation.
+
+\paragraph{Multi-task interactions can be non-intuitive.} The loss-weight sweep suggests that improving one task's loss weight does not guarantee improvement in that task's metric. In particular, emphasizing detection improved segmentation mIoU in our study. A plausible explanation is that detection loss forces the shared backbone to learn more object-centric features that transfer to segmentation.
+
+\subsection{Detection validity and metric interpretation}
+A major limitation of v1 is that detection was not evaluated using IoU-matched boxes. The v2 change corrects this and makes detection evaluation meaningful. However, it also changes the difficulty of the problem and increases compute. Therefore:
+\begin{itemize}
+  \item v1 \texttt{val/map} is useful for comparing v1 runs among themselves,
+  \item v2 \texttt{val/map50} is the appropriate metric for true detection performance,
+  \item comparisons between v1 and v2 detection metrics must be qualitative and cautious.
+\end{itemize}
+
+\subsection{Compute constraints and experimental limitations}
+Our experiments were executed on a laptop GPU with 4\,GB VRAM, which constrained batch size and limited the feasible scope of heavier models. v2, in particular, increased both memory usage and runtime. Another limitation is implementation completeness: in v1, some sweep knobs (loss functions and heavy augmentation) were not fully implemented, which reduces the interpretability of those phase outcomes.
+
+% ============================================================================
+% 7. Conclusion and Future Work
+% ============================================================================
+\section{Conclusion and Future Work}
+
+\subsection{Conclusion}
+Based on the phase-based sweep analysis, we draw the following conclusions:
+\begin{itemize}
+  \item \textbf{Learning rate has a clear sweet spot:} moderate learning rates (run03/run04) outperform very low or very high values.
+  \item \textbf{Augmentation and standardization matter most:} standardize + basic augmentation (run18) is the strongest overall recipe; no augmentation consistently underperforms.
+  \item \textbf{Strong explicit regularization can hurt:} very strong weight decay and high dropout reduce final metrics, especially for segmentation.
+  \item \textbf{Backbone choice is a compute--quality trade-off:} ResNet50 can slightly improve detection but costs significantly more memory; ResNet18 is a strong efficiency baseline.
+  \item \textbf{v2 improves methodological correctness for detection:} introducing IoU-based mAP@0.5 and a real detector provides more meaningful detection evaluation, and scheduling (run42) becomes essential for stability.
+\end{itemize}
+
+\subsection{Future work}
+The following improvements are likely to increase training quality and scientific value:
+\begin{itemize}
+  \item \textbf{Complete all planned v2 runs:} extend the v2 ablation to include pretrained backbones and COCO-initialized detectors, and run the remaining v2 catalog.
+  \item \textbf{Improve optimization for v2:} adopt AdamW or SGD+momentum, add warmup, and consider gradient clipping for stability.
+  \item \textbf{Make validation loss comparable:} in v2, compute/record detection loss (or report separate task losses) so train/val curves remain interpretable.
+  \item \textbf{Implement real alternative losses:} focal loss for segmentation and IoU-aware box regression losses for detection (ensuring config options are truly active).
+  \item \textbf{Strengthen reporting:} include a best-per-phase table with final numeric values (mIoU, pixel accuracy, map/map50) and add qualitative failure-case figures.
+\end{itemize}
+
+% ============================================================================
+% Appendix
+% ============================================================================
+\appendix
+
+\section{Reproducibility checklist}
+\begin{itemize}
+  \item \textbf{Hardware:} Laptop, NVIDIA RTX3050 (4\,GB VRAM), Intel i5-134500.
+  \item \textbf{Dataset:} Pascal VOC2012 (alternative download source due to network restrictions).
+  \item \textbf{Experiment tracking:} Aim (local repo).
+  \item \textbf{Run definitions:} \texttt{sweep\_experiments.py} (with documented manual runs in the report).
+  \item \textbf{Sweep execution:} \texttt{sweep\_runner.py} (supports resume/dry-run and extra overrides).
+\end{itemize}
+
+\section{Phase plots}
+All phase plots are stored in \texttt{../analysis\_metrics/} and are included directly in Section~5.
+
+% ============================================================================
+% References
+% ============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{everingham2010pascal}
+Mark Everingham, Luc Van Gool, Christopher K. I. Williams, John Winn, and Andrew Zisserman.
+\newblock The Pascal Visual Object Classes (VOC) Challenge.
+\newblock \emph{International Journal of Computer Vision}, 88(2):303--338, 2010.
+
+\bibitem{paszke2019pytorch}
+Adam Paszke \etal
+\newblock PyTorch: An Imperative Style, High-Performance Deep Learning Library.
+\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2019.
+
+\bibitem{he2016resnet}
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+\newblock Deep Residual Learning for Image Recognition.
+\newblock In \emph{IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 2016.
+
+\bibitem{lin2017focal}
+Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He, and Piotr Doll{\'a}r.
+\newblock Focal Loss for Dense Object Detection.
+\newblock In \emph{IEEE International Conference on Computer Vision (ICCV)}, 2017.
+
+\end{thebibliography}
+
+\end{document}
