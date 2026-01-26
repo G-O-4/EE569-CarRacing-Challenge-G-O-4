@@ -36,6 +36,7 @@ checkpoints/
 .aim/
 *.mp4
 *.pth
+tb_logs/
 
 # Local dev notes
 DEV_NOTES_SAC_DRQ.md
