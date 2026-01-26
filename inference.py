@@ -134,11 +134,13 @@ def run_episode_ppo(env, model, deterministic=True, seed=None):
     """
     Run a single episode with PPO model (uses VecEnv).
     Returns total reward.
+    
+    Note: VecEnv doesn't support per-episode seeding in reset().
+    The seed parameter is accepted for API consistency but ignored.
+    Seeding happens at environment creation time for VecEnv.
     """
-    if seed is None:
-        obs = env.reset()
-    else:
-        obs = env.reset(seed=int(seed))
+    # VecEnv wrappers don't support seed in reset(), just reset normally
+    obs = env.reset()
     total_reward = 0.0
     done = False
     
