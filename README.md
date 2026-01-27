@@ -1,38 +1,35 @@
-# EE569 Deep Learning: CarRacing-v3 RL Challenge 🏎️💨
+# EE569 Deep Learning: CarRacing-v3 RL Challenge
 
 **Course:** EE569 Deep Learning  
-**Due Date:** 29 December 2025, 23:59  
-**Weight:** 6 marks (out of 100)  
-**Group Size:** 2-3 students  
-
-## 📋 Overview
-
-Your mission is to implement and train a Reinforcement Learning agent to master the **CarRacing-v3** environment in Gymnasium. You may use any algorithm covered in class (DQN, TD3, SAC, World Models, or CQL).
-
-**Goal:** Achieve professional-level racing performance while minimizing sample complexity.
-
-### 🎯 Performance Thresholds
-- **Success:** Average score > **700** over 3 evaluation episodes.
-- **Excellence:** Average score > **800** with minimal environment interactions.
-
-### 🚫 Restrictions
-1. **Inputs:** Must work with pixel inputs (84×84).
-2. **Environment:** No modifications to the environment logic allowed (beyond standard preprocessing like resizing/stacking).
+**Institution:** University of Tripoli, Libya  
+**Instructor:** Dr. Nuri Benbarka  
+**Team:** Ahmed Mohamed Bakory, Faisal Ali Elhouderi, Muhammed Ali Muhmoud  
+**Repository:** https://github.com/G-O-4/EE569-CarRacing-Challenge-G-O-4
 
 ---
 
-## 🚀 Getting Started (Baseline)
+## Results Summary
 
-This repository provides a **DQN baseline implementation** to get you started.
+| Algorithm | Mean Reward | Std | Status |
+|-----------|-------------|-----|--------|
+| **SAC+DrQ** | **861.47** | 52.73 | Exceeds 800 threshold |
+| PPO (Gaussian) | 306.92 | 42.89 | Needs improvement |
+| SAC+DrQ (modified) | 209.51 | 23.00 | Broken, reverted |
 
-### 1. Installation
+Our best model (SAC+DrQ) exceeds both the **700 success** and **800 excellence** thresholds.
+
+---
+
+## Quick Start
+
+### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/Nuri-benbarka/EE569-CarRacing-Challenge.git
-cd car_racing
+git clone https://github.com/G-O-4/EE569-CarRacing-Challenge-G-O-4.git
+cd EE569-CarRacing-Challenge-G-O-4
 
-# Create environment (recommended)
+# Create environment
 conda create -n car_racing python=3.10
 conda activate car_racing
 
@@ -40,147 +37,172 @@ conda activate car_racing
 pip install -r requirements.txt
 ```
 
-### 2. Training
+### Training
 
-Train the agent using `dqn_car_racing.py`. This script includes Aim logging.
-
+**SAC+DrQ (Recommended):**
 ```bash
-python dqn_car_racing.py
+python train.py --total-steps 2000000 --seed 1 --checkpoint-dir checkpoints/sac_run --run-name sac_baseline
 ```
 
-To view training logs with Aim:
+**PPO with Beta Distribution:**
+```bash
+python train_ppo.py --total-timesteps 1000000 --seed 42 --n-envs 8 --batch-size 256 --learning-rate 2.5e-4 --clip-range 0.1 --checkpoint-dir checkpoints/ppo_run --run-name ppo_beta
+```
+
+**PPO with Gaussian (fallback):**
+```bash
+python train_ppo.py --total-timesteps 1000000 --seed 42 --use-gaussian --checkpoint-dir checkpoints/ppo_gauss --run-name ppo_gaussian
+```
+
+### Evaluation
+
+```bash
+# SAC+DrQ
+python inference.py --checkpoint checkpoints/sac_run/best_sac_drq.pth --algo sac_drq --episodes 3 --no-render --seed 1
+
+# PPO
+python inference.py --checkpoint checkpoints/ppo_run/best_model.zip --algo ppo --episodes 3 --no-render --seed 1
+
+# Save video
+python inference.py --checkpoint checkpoints/sac_run/best_sac_drq.pth --algo sac_drq --episodes 1 --save-video --video-dir ./videos
+```
+
+### View Logs
+
 ```bash
 aim up
 ```
 
-### 3. Evaluation
+---
 
-Run the inference script to evaluate your trained model and generate videos.
+## Recent Fixes Applied
 
-```bash
-# Run 3 evaluation episodes (default uses checkpoints/best_model.pth)
-python inference.py --episodes 3
+The following fixes were applied on January 27, 2026. See [status/CHANGES.md](status/CHANGES.md) for full details.
 
-# Save video of the run
-python inference.py --episodes 1 --save-video
+### SAC+DrQ Reverted to Working Configuration
 
-# Evaluate a specific checkpoint without rendering (faster)
-python inference.py --checkpoint checkpoints/final_model.pth --no-render
+The modifications in commits `9ceae12` and `c86d66f` broke SAC performance (861 → 209). Changes reverted:
+
+| Parameter | Broken | Fixed |
+|-----------|--------|-------|
+| `replay_size` | 70,000 | 30,000 |
+| `updates_per_step` | 2 | 1 |
+| `feature_dim` | 64 | 50 |
+| AMP (mixed precision) | enabled | removed |
+
+**Root cause:** AMP refactoring broke gradient flow in the `update()` method by reusing stale encoder features.
+
+### PPO Upgraded to Beta Distribution
+
+Based on research (see [status/research.md](status/research.md)):
+- Standard Gaussian PPO: ~897 avg reward
+- **Beta Distribution PPO: ~913 avg reward** (state of the art)
+
+New features:
+- `BetaActorCriticPolicy` - naturally bounded to [-1, 1] action space
+- `AimWriter` - reliable metric logging (fixes missing metrics issue)
+- Optimized hyperparameters: `n_envs=8`, `batch_size=256`, `clip_range=0.1`
+
+### Deleted `run_experiments.sh`
+
+The script had `--no-aim` flag by default, causing runs to not be tracked. All commands should now be run directly in the terminal.
+
+---
+
+## Planned Runs
+
+These runs have been designed but **not yet executed**. All will be tracked by Aim.
+
+### Bonus 1: Highest Score
+
+| Run | Command | Expected |
+|-----|---------|----------|
+| 1 | `python train.py --total-steps 2000000 --seed 1 --checkpoint-dir checkpoints/sac_2M_s1 --run-name sac_2M_baseline` | 850-880 |
+| 2 | `python train_ppo.py --total-timesteps 2000000 --seed 42 --n-envs 8 --batch-size 256 --learning-rate 2.5e-4 --clip-range 0.1 --checkpoint-dir checkpoints/ppo_beta_2M --run-name ppo_beta_2M` | 880-920 |
+
+### Bonus 2: Efficiency Champion
+
+| Run | Command | Expected |
+|-----|---------|----------|
+| 3 | `python train.py --total-steps 1000000 --seed 1 --checkpoint-dir checkpoints/sac_1M_eff --run-name sac_1M_efficiency` | 750-800 |
+| 4 | `python train_ppo.py --total-timesteps 1000000 --seed 42 --n-envs 8 --batch-size 256 --learning-rate 2.5e-4 --clip-range 0.1 --checkpoint-dir checkpoints/ppo_beta_1M --run-name ppo_beta_1M_efficiency` | 750-850 |
+| 5 | `python train.py --total-steps 500000 --seed 1 --action-repeat 2 --checkpoint-dir checkpoints/sac_500k_ar2 --run-name sac_500k_action_repeat` | 700-800 |
+
+### Recommended Order
+
+1. **Run 3** (SAC 1M) - Quick validation that fixes work
+2. **Run 4** (Beta-PPO 1M) - Test PPO improvements
+3. **Run 1** (SAC 2M) - Main Bonus 1 attempt
+4. **Run 5** (SAC 500k AR2) - Bonus 2 efficiency test
+5. **Run 2** (Beta-PPO 2M) - Best shot at highest score
+
+---
+
+## Completed Runs
+
+| Run | Algorithm | Steps | Reward | Duration | Notes |
+|-----|-----------|-------|--------|----------|-------|
+| 1 | SAC+DrQ (initial) | 1.91M | **861.47** | 25h 15m | Best result, tracked in Aim |
+| 2 | PPO (Gaussian) | 1.00M | 306.92 | 3h 35m | Aim tracked (system metrics only) |
+| 3 | SAC+DrQ (modified) | ~1.7M | 209.51 | ~38h | Not tracked (--no-aim), reverted |
+| 4-6 | SAC+DrQ | 20-40k | N/A | N/A | Killed by OOM |
+
+---
+
+## Project Structure
+
+```
+├── train.py           # SAC+DrQ training script
+├── train_ppo.py       # PPO training script (Beta/Gaussian)
+├── inference.py       # Evaluation and video recording
+├── sac_drq.py         # SAC+DrQ agent implementation
+├── carracing_env.py   # Environment wrappers
+├── dqn_car_racing.py  # DQN baseline (from original repo)
+├── requirements.txt   # Dependencies
+├── status/
+│   ├── CHANGES.md           # Detailed fix documentation
+│   ├── performed_runs.txt   # Run history and plans
+│   ├── research.md          # PPO/SAC research notes
+│   └── IMPLEMENTATION_NOTES.md
+├── report/
+│   ├── report.tex     # LaTeX report
+│   └── images/        # Aim screenshots and figures
+└── checkpoints/       # Model checkpoints (gitignored)
 ```
 
 ---
 
-## 🏁 High-Score Track (Recommended): SAC + DrQ (Continuous Control)
+## Hardware Requirements
 
-The baseline DQN uses a **very coarse 5-action discretization**, which can’t smoothly steer while accelerating/braking. To push toward **850–950+**, this repo includes a **pixel-based SAC + DrQ** implementation in `train.py` (continuous 2D actions: steer + accel).
+Tested on:
+- **GPU:** NVIDIA RTX 3050 (4GB VRAM)
+- **RAM:** 8GB (WSL2: ~5.8GB available)
 
-### 1. Training (SAC + DrQ)
-
-```bash
-# Train for ~2M env steps (good first budget for 800+; extend to ~3M if close)
-python train.py --total-steps 2000000 --seed 1
-
-# Optional: enable mixed precision on CUDA GPUs
-python train.py --total-steps 2000000 --seed 1 --use-amp
-
-# Optional: use RGB instead of grayscale (more compute/memory)
-python train.py --total-steps 2000000 --seed 1 --rgb --frame-stack 3
-```
-
-**Outputs:**
-- Checkpoints in `./checkpoints/`: `best_sac_drq.pth`, `last_sac_drq.pth`, `final_sac_drq.pth`
-- Aim logs (if enabled): run `aim up`
-
-### 2. Evaluation / Video (SAC + DrQ)
-
-```bash
-# Evaluate best checkpoint (3 episodes, no rendering)
-python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --episodes 3 --no-render --seed 1
-
-# Save a video of the best checkpoint
-python inference.py --checkpoint checkpoints/best_sac_drq.pth --algo sac_drq --episodes 1 --save-video --video-dir ./videos --seed 1
-```
-
-### 3. Extend a run (resume training)
-
-```bash
-# Continue training from a previous checkpoint up to a higher total step count
-python train.py --resume checkpoints/last_sac_drq.pth --total-steps 3000000 --seed 1
-```
+Memory usage:
+| Algorithm | RAM | GPU |
+|-----------|-----|-----|
+| SAC (30k buffer) | ~1.7 GB | ~1.5 GB |
+| Beta-PPO (8 envs) | ~1.2 GB | ~1.5 GB |
 
 ---
 
-## 🔬 Suggested Experiment Matrix (6+ runs)
+## References
 
-Keep runs **step-budgeted** and early-stop stalled configs (balanced score + sample-efficiency).
-
-| Run | Change | Example command | Step budget |
-|-----|--------|------------------|------------|
-| 1 | SAC (grayscale) + DrQ (default) | `python train.py --total-steps 2000000 --seed 1` | 2.0M |
-| 2 | Reward scale sweep | `python train.py --total-steps 2000000 --seed 1 --reward-scale 0.1` | 2.0M |
-| 3 | Batch / updates-per-step sweep | `python train.py --total-steps 2000000 --seed 1 --batch-size 256 --updates-per-step 4` | 2.0M |
-| 4 | Encoder size sweep | `python train.py --total-steps 2000000 --seed 1 --feature-dim 128 --hidden-dim 1024` | 2.0M |
-| 5 | RGB vs grayscale | `python train.py --total-steps 2000000 --seed 1 --rgb --frame-stack 3` | 2.0M |
-| 6 | Action repeat | `python train.py --total-steps 2000000 --seed 1 --action-repeat 2` | 2.0M |
-| 7 | Seed robustness | `python train.py --total-steps 1000000 --seed 2` | 1.0–2.0M |
+- [Soft Actor-Critic (Haarnoja et al., 2018)](https://arxiv.org/abs/1801.01290)
+- [DrQ: Image Augmentation (Kostrikov et al., 2020)](https://arxiv.org/abs/2004.13649)
+- [PPO (Schulman et al., 2017)](https://arxiv.org/abs/1707.06347)
+- [Beta Policy for Continuous Control (Chou et al., 2017)](https://arxiv.org/abs/1707.02152)
 
 ---
 
-## 📊 Deliverables
+## Original Assignment
 
-Submit a single ZIP file containing:
+This repository is a fork of [Dr. Nuri's EE569-CarRacing-Challenge](https://github.com/Nuri-benbarka/EE569-CarRacing-Challenge).
 
-### 1. Code 💻
-- `train.py` (or your modified `dqn_car_racing.py`) - Main training script.
-- `inference.py` - Evaluation & video recording.
-- `requirements.txt` - Complete dependency list with versions.
-- **Micro-objective:** Code must be clean, modular, and well-commented.
+### Performance Thresholds
+- **Success:** Average score > 700 over 3 evaluation episodes
+- **Excellence:** Average score > 800 with minimal environment interactions
 
-### 2. Report 📄
-A **4-6 page PDF** (`report.pdf`) covering:
-- **Method Selection:** Why this algorithm? Theoretical advantages?
-- **Implementation Details:** Architectures, loss functions, hyperparameters.
-- **Experimental Design:** Table of **6+ experiments** (varied hyperparams, architectures, or algorithms).
-- **Results:** Learning curves, convergence analysis, final performance.
-- **Comparison:** Sample efficiency vs. final performance.
-- **Ablation Study:** What components mattered most? (e.g., target networks, epsilon decay).
-- **Challenges:** Negative results and what you learned from failures.
-
-### 3. Aim Experiment Logs 📈
-Include your `.aim` directory or a comprehensive export of your logs to prove reproducibility.
-
-### 4. Video 🎥
-- `best_run.mp4`: A video of your best evaluation episode (score > 700).
-- Must demonstrate smooth, stable driving.
-- Use the `--save-video` flag in `inference.py`.
-
-### 5. README 📖 
-- Clear instructions to reproduce your results.
-- Exact training and evaluation commands.
-- Brief description of your algorithm and findings.
-
----
-
-## 🏆 Grading Scheme (6 Marks Total)
-
-### Base Grade
-| Component | Marks | Criteria |
-|-----------|-------|----------|
-| **Method Implementation** | 1.0 | Correctness and completeness of the RL algorithm. |
-| **Algorithmic Understanding** | 1.0 | Quality of report and theoretical justification. |
-| **Experimental Rigor** | 1.0 | 6+ meaningful experiments & ablation studies. |
-| **Performance** | 1.0 | Achieving > 700 average reward. |
-| **Reproducibility** | 1.0 | aim logs, clear README, clean code. |
-| **Video Quality** | 1.0 | Demonstrates learned behavior (smooth driving). |
-
-### Bonus Marks (Maximum +2)
-**🏅 Bonus 1: Highest Score (+1)**
-- Awarded to the group with the **highest evaluation score** (avg over 3 episodes).
-- Must be > 700 to qualify. Winner takes all (no ties).
-
-**🌱 Bonus 2: Efficiency Champion (+1)**
-- Awarded to the group with the **lowest total environment interactions** (sum of steps across all experiments) while still achieving a score > 700.
-- Proven via `aim_run['hparams']['total_steps']` or logs.
-
-## توّكّل على الله، واستمتع بتعليم مركبتك القيادة! 💨🚗
-
+### Bonus Marks
+- **Bonus 1:** Highest evaluation score among groups
+- **Bonus 2:** Lowest total environment interactions while achieving >700
