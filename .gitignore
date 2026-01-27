@@ -41,6 +41,3 @@ tb_logs/
 # Local dev notes
 DEV_NOTES_SAC_DRQ.md
 .DS_Store
-
-# Keeping track of the status
-status/

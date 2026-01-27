@@ -1,0 +1,95 @@
+I've ran some runs on this repo implementation, three main runs and some other failed ones.
+
+The first main one is the SAC+DrQ that was ran until 1920 episodes, the implementaion of this model was unchanged up until the commit with this identifier:
+commit 662f194c54b7502bce01524a757e7508993b654f
+This run is tracked by aim-ui (or aim for short) with these metircs:
+actor_loss, alpha, alpha_loss, critic_loss, episode_len, episode_reward, eval_reward_mean, eval_reward_std, mean_log, mean_q_pi and some system into like the CPU% GPU% and so on.
+
+The other main run is the initial PPO run which was ran until 1000 episodes, the implementaion of this model was unchanged up until the commit with this identifier:
+commit 662f194c54b7502bce01524a757e7508993b654f
+This run does appear in aim but with no tracked real metrics, it only has the system metrics.
+
+The third main run is the modified SAC+DrQ that was ran until 1700 episodes, this model was the same as the first model but with some changes and modifications that were applied at the commit with this identifier and still to the current state of the repo:
+commit c86d66fea2f6789cbeda2bb0bb081817ab4c595c
+This model was ran with the file run_expiremnts.sh which has the flag --no-aim by default, so this run doesn't appear in the aim tracked runs at all, but it was checkpointed at the checkpoint directory. 
+
+The PPO model performed badly, as well as the modified SAC+DrQ model the inference results of the three models are in the inference_output.txt. Although the SAC+DrQ were modified to perform better it perform terribly worse.
+
+
+There were three models that run for only 20-40 episodes and were Killed by the OS due to OOM issues.
+The 1920 SAC+DrQ model was also stopped at 600 episodes but were resumed to 1920, so aim viewed as seperate runs in aim but at the same expiremnt.
+
+So the current state of aim is:
+* Expiremnts:
+PPO initial
+-runs: 
+Run: PPO
+
+SAC+DrQ initial
+-runs:
+Run: initial SAC+DrQ from 600 to 1920 
+Run: initial SAC+DrQ until 600
+Run: initial killed at 40
+Run: initial killed at 20-2
+Run: initial killed at 20
+
+================================================================================
+FIXES APPLIED - January 27, 2026
+================================================================================
+
+The following fixes were applied to restore working performance:
+
+1. SAC+DrQ REVERTED to working configuration (commit 662f194):
+   - replay_size: 70,000 → 30,000
+   - updates_per_step: 2 → 1
+   - feature_dim: 64 → 50
+   - Removed AMP (mixed precision) code that broke gradient flow
+   - Restored original update() method
+
+2. PPO UPGRADED to Beta distribution:
+   - Implemented custom BetaActorCriticPolicy (research shows ~913 vs ~897 for Gaussian)
+   - Added AimWriter for reliable metric logging (fixes missing metrics issue)
+   - Optimized hyperparameters: n_envs=8, batch_size=256, clip_range=0.1
+
+3. DELETED run_experiments.sh (caused untracked runs due to --no-aim flag)
+
+================================================================================
+PLANNED RUNS (5 total)
+================================================================================
+
+All runs will be tracked by Aim. Commands to copy-paste directly:
+
+--- BONUS 1: Highest Score ---
+
+Run 1: SAC Baseline (2M steps)
+python train.py --total-steps 2000000 --seed 1 --checkpoint-dir checkpoints/sac_2M_s1 --run-name sac_2M_baseline
+Expected: 850-880 avg reward
+
+Run 2: Beta-PPO (2M steps) 
+python train_ppo.py --total-timesteps 2000000 --seed 42 --n-envs 8 --batch-size 256 --learning-rate 2.5e-4 --clip-range 0.1 --checkpoint-dir checkpoints/ppo_beta_2M --run-name ppo_beta_2M
+Expected: 880-920 avg reward (BEST BONUS 1 POTENTIAL)
+
+--- BONUS 2: Efficiency Champion (minimum steps for >700) ---
+
+Run 3: SAC Efficiency (1M steps)
+python train.py --total-steps 1000000 --seed 1 --checkpoint-dir checkpoints/sac_1M_eff --run-name sac_1M_efficiency
+Expected: 750-800 avg reward
+
+Run 4: Beta-PPO Efficiency (1M steps)
+python train_ppo.py --total-timesteps 1000000 --seed 42 --n-envs 8 --batch-size 256 --learning-rate 2.5e-4 --clip-range 0.1 --checkpoint-dir checkpoints/ppo_beta_1M --run-name ppo_beta_1M_efficiency
+Expected: 750-850 avg reward
+
+Run 5: SAC with Action Repeat (500k steps, action_repeat=2)
+python train.py --total-steps 500000 --seed 1 --action-repeat 2 --checkpoint-dir checkpoints/sac_500k_ar2 --run-name sac_500k_action_repeat
+Expected: 700-800 avg reward (BEST BONUS 2 POTENTIAL - only 500k steps!)
+
+--- RECOMMENDED ORDER ---
+1. Run 3 (SAC 1M) - Quick validation that fixes work
+2. Run 4 (Beta-PPO 1M) - Test PPO improvements
+3. Run 1 (SAC 2M) - Main Bonus 1 attempt
+4. Run 5 (SAC 500k AR2) - Bonus 2 efficiency test
+5. Run 2 (Beta-PPO 2M) - Best shot at highest score
+
+--- EVALUATION ---
+python inference.py --checkpoint checkpoints/<dir>/best_sac_drq.pth --algo sac_drq --episodes 3 --no-render --seed 1
+python inference.py --checkpoint checkpoints/<dir>/best_model.zip --algo ppo --episodes 3 --no-render --seed 1

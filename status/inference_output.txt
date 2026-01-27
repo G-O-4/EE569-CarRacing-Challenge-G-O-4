@@ -1,0 +1,38 @@
+The SAC+DrQ that got trained for 1920 episodes (initial implementation)
+============================================================
+📊 PERFORMANCE SUMMARY
+============================================================
+Episodes completed: 3
+Mean Reward:        861.47 ± 52.73
+Max Reward:         936.00
+Min Reward:         822.36
+============================================================
+
+🎥 Videos saved in: ./videos/sac_1920/
+
+
+The SAC+DrQ model that got trained for 1700 episodes (modified implementation)
+============================================================
+📊 PERFORMANCE SUMMARY
+============================================================
+Episodes completed: 3
+Mean Reward:        209.51 ± 23.00
+Max Reward:         239.48
+Min Reward:         183.58
+============================================================
+
+🎥 Videos saved in: ./videos/sac_1700_no_aim/
+
+
+
+The PPO model that got trained for 1000 episodes (initial implementation)
+============================================================
+📊 PERFORMANCE SUMMARY
+============================================================
+Episodes completed: 3
+Mean Reward:        306.92 ± 42.89
+Max Reward:         352.90
+Min Reward:         249.67
+============================================================
+
+🎥 Videos saved in: ./videos/ppo_1000_first/

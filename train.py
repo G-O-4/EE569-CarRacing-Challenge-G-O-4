@@ -75,12 +75,6 @@ def main():
     parser.add_argument("--total-steps", type=int, default=SACConfig.total_steps)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument(
-        "--use-amp",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Enable/disable AMP mixed precision on CUDA (default: off, or use checkpoint value when resuming)",
-    )
     parser.add_argument("--resume", type=str, default=None, help="Resume training from a SAC+DrQ checkpoint path")
 
     parser.add_argument("--grayscale", action="store_true", help="Use grayscale observations (default)")
@@ -127,11 +121,6 @@ def main():
     set_seed(args.seed)
     torch.backends.cudnn.benchmark = True
 
-    use_amp = False if args.use_amp is None else bool(args.use_amp)
-    if use_amp and device.type != "cuda":
-        print("Warning: AMP requested but CUDA is unavailable. Disabling AMP.")
-        use_amp = False
-
     cfg = SACConfig(
         grayscale=grayscale,
         frame_stack=args.frame_stack,
@@ -148,7 +137,6 @@ def main():
         drq_pad=args.drq_pad,
         feature_dim=args.feature_dim,
         hidden_dim=args.hidden_dim,
-        use_amp=use_amp,
     )
 
     aim_run = None
@@ -208,11 +196,6 @@ def main():
         cfg.total_steps = int(args.total_steps)
         cfg.eval_every_steps = int(args.eval_every_steps)
         cfg.num_eval_episodes = int(args.num_eval_episodes)
-        if args.use_amp is not None:
-            cfg.use_amp = bool(args.use_amp)
-        if cfg.use_amp and device.type != "cuda":
-            print("Warning: AMP enabled in config but CUDA is unavailable. Disabling AMP.")
-            cfg.use_amp = False
 
         # Recreate env/agent with checkpoint cfg
         env.close()
